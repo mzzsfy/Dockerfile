@@ -1,4 +1,4 @@
-FROM webdevops/php-nginx:7.4
+FROM webhippie/php-nginx:7
 ENV COMPOSER_ALLOW_SUPERUSER=true WEB_DOCUMENT_ROOT=/app/public
 COPY . /app
 WORKDIR /app
