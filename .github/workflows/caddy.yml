@@ -53,7 +53,7 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: ${{steps.docker_before.outputs.tags}}
-          platforms: linux/amd64,linux/arm64/v8,linux/arm64/v7
+          platforms: linux/amd64,linux/arm64/v8,linux/arm/v7
       
       # 打印 docker 镜像 SHA256 Hash 值
       - name: Image digest
