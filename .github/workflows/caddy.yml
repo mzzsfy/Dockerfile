@@ -37,7 +37,7 @@ jobs:
       - name: Docker before
         id: docker_before
         run: |
-          image="${{ secrets.DOCKER_HUB_USERNAME }}/${{ github.event.inputs.imageName }}"
+          image="${{ secrets.DOCKER_HUB_USERNAME }}/caddy-alidns"
           tags="$image:latest,$image:$(date +'%m-%d_%H-%M-%S')"
           echo "target images $tags"
           echo "tags=$tags" >> $GITHUB_OUTPUT
