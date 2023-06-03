@@ -1,0 +1,59 @@
+name: 'caddy'
+
+on:  
+  schedule:
+    - cron:  '0 16 */7 * *'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Out
+        uses: actions/checkout@v3
+
+      - name: Setup timezone
+        uses: zcong1993/setup-timezone@master
+        with:
+          timezone: Asia/Shanghai
+
+      # 克隆目标,并且准备上下文
+      - name: Git clone
+        id: redy
+        run: |
+          cp ./caddy/Caddy-AliDns ./Dockerfile
+
+      # docker login
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+
+      # 设置 docker buildx 环境
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v2
+
+      # build 前置操作
+      - name: Docker before
+        id: docker_before
+        run: |
+          image="${{ secrets.DOCKER_HUB_USERNAME }}/${{ github.event.inputs.imageName }}"
+          tags="$image:latest,$image:$(date +'%m-%d_%H-%M-%S')"
+          echo "target images $tags"
+          echo "tags=$tags" >> $GITHUB_OUTPUT
+          docker run --rm --privileged multiarch/qemu-user-static --reset -p yes > /dev/null 2>&1
+
+      # build 并且 push docker 镜像
+      - name: Build and push
+        id: docker_build
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{steps.docker_before.outputs.tags}}
+          platforms: linux/amd64,linux/arm64/v8,linux/arm64/v7
+      
+      # 打印 docker 镜像 SHA256 Hash 值
+      - name: Image digest
+        run: echo ${{ steps.docker_build.outputs.digest }}
