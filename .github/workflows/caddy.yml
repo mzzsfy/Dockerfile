@@ -22,7 +22,7 @@ jobs:
       - name: ready
         run: |
           cp ./caddy/Dockerfile ./Dockerfile
-          sed -i "s/${plugin}/${{ matrix.plugin }}" ./Dockerfile
+          sed -i "s/${plugin}/${{ matrix.plugin }}/" ./Dockerfile
 
       # docker login
       - name: Login to Docker Hub
