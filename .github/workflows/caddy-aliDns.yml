@@ -1,5 +1,3 @@
-name: 'caddy'
-
 on:  
   workflow_dispatch:
   schedule:
