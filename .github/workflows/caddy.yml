@@ -4,6 +4,9 @@ on:
     - cron:  '0 16 */7 * *'
 jobs:
   build:
+    strategy:
+      matrix:
+        plugin: [cloudflare,alidns]
     runs-on: ubuntu-latest
     steps:
       - name: Check Out
@@ -15,10 +18,10 @@ jobs:
           timezone: Asia/Shanghai
 
       # 克隆目标,并且准备上下文
-      - name: Git clone
-        id: redy
+      - name: ready
         run: |
-          cp ./caddy/Caddy-AliDns ./Dockerfile
+          cp ./caddy/Dockerfile ./Dockerfile
+          sed -i "s/${plugin}/${{ matrix.plugin }}" ./Dockerfile
 
       # docker login
       - name: Login to Docker Hub
@@ -36,8 +39,8 @@ jobs:
       - name: Docker before
         id: docker_before
         run: |
-          image="${{ secrets.DOCKER_HUB_USERNAME }}/caddy-alidns"
-          tags="$image:latest,$image:$(date +'%m-%d_%H-%M-%S')"
+          image="${{ secrets.DOCKER_HUB_USERNAME }}/caddy-dns"
+          tags="$image:${{matrix.plugin}},$image:${{matrix.plugin}}_$(date +'%m-%d_%H-%M-%S')"
           echo "target images $tags"
           echo "tags=$tags" >> $GITHUB_OUTPUT
           docker run --rm --privileged multiarch/qemu-user-static --reset -p yes > /dev/null 2>&1
@@ -51,7 +54,7 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: ${{steps.docker_before.outputs.tags}}
-          platforms: linux/amd64,linux/arm64/v8,linux/arm/v7
+          platforms: linux/amd64,linux/arm64/v8
       
       # 打印 docker 镜像 SHA256 Hash 值
       - name: Image digest
