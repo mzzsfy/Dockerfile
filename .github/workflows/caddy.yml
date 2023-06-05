@@ -7,7 +7,7 @@ jobs:
   build:
     strategy:
       matrix:
-        plugin: [cloudflare,alidns]
+        plugin: [cloudflare,alidns,azure,dnspod,googleclouddns,duckdns]
     runs-on: ubuntu-latest
     steps:
       - name: Check Out
