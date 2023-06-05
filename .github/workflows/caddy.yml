@@ -18,7 +18,6 @@ jobs:
         with:
           timezone: Asia/Shanghai
 
-      # 克隆目标,并且准备上下文
       - name: ready
         run: |
           cp ./caddy/Dockerfile ./Dockerfile
@@ -44,6 +43,7 @@ jobs:
           tags="$image:${{matrix.plugin}},$image:${{matrix.plugin}}_$(date +'%m-%d_%H-%M-%S')"
           echo "target images $tags"
           echo "tags=$tags" >> $GITHUB_OUTPUT
+          # 一个特殊镜像,修复某些buildx 的 bug
           docker run --rm --privileged multiarch/qemu-user-static --reset -p yes > /dev/null 2>&1
 
       # build 并且 push docker 镜像
