@@ -15,8 +15,8 @@ fi
 if [ ! -z "$token" ]; then
   sed -i "/access_token/{s#'[^']*'#$token#}" /data/config.yaml
 fi
-if [ ! -z "$ws_reverse" ]; then
-  sed -i "/ws_reverse/s#\[.*\]#[$ws_reverse]#" /data/config.yaml
+if [ ! -z "$ws_reverse_url" ]; then
+  sed -i "/ws_reverse/s#\[.*\]#[$ws_reverse_url]#" /data/config.yaml
 fi
 if [ ! -z "$onebotVersion" ]; then
   sed -i "/version/s/V\d+/V$onebotVersion/" /data/config.yaml
