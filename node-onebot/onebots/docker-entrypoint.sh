@@ -33,7 +33,7 @@ if [ ! -f /data/${QQ_Number}_token ]; then
     sed -i "/password/d" /data/config.yaml
   fi
 
-  (tail -f /tmp/.input ) | onebots -f /data/config.yaml | tee /tmp/.out &
+  (tail -f /tmp/.input ) | onebots -c /data/config.yaml | tee /tmp/.out &
   kpid=$!
 
   ok='false'
