@@ -20,7 +20,7 @@ jobs:
 
       - name: ready
         run: |
-          cp ./node-onebot/${{ matrix.plugin }}/* ./
+          cp -r ./node-onebot/${{ matrix.plugin }}/* ./
 
       # docker login
       - name: Login to Docker Hub
