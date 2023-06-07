@@ -25,7 +25,7 @@ if [ ! -f /data/${QQ_Number}_token ]; then
   echo "\n" > /tmp/.input
   if [ ! -z "$QQ_Password" ]; then
     echo '使用密码登录'
-    sed -i "/password/abcedfghi/$QQ_Password/" /data/config.yaml
+    sed -i "/password/s/abcedfghi/$QQ_Password/" /data/config.yaml
   else
     echo '未设置环境变量QQ_Password 使用扫码登录'
     sed -i "/password/d" /data/config.yaml
@@ -77,8 +77,6 @@ if [ ! -f /data/${QQ_Number}_token ]; then
     kill $kpid
     sleep 1
   fi
-  rm /tmp/.input
-  rm /tmp/.out
 fi
 
 rm -rf /tmp/*
