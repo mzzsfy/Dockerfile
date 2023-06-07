@@ -11,6 +11,12 @@ sed -i "/123456789/s/123456789/$QQ_Number/" /data/config.yaml
 
 if [ ! -z "$platform" ]; then
   sed -i "/platform/{s/[0-9]/$platform/}" /data/config.yaml
+elif [ ! -z "$QQ_Password" ]; then
+  echo '未设置platform环境变量,也未设置QQ_Password环境变量,使用手表+扫码登录'
+  sed -i "/platform/{s/[0-9]/3/}" /data/config.yaml
+else
+  echo '未设置platform环境变量,设置QQ_Password环境变量,使用ipad+密码登录'
+  sed -i "/platform/{s/[0-9]/5/}" /data/config.yaml
 fi
 if [ ! -z "$token" ]; then
   sed -i "/access_token/{s#'[^']*'#$token#}" /data/config.yaml
