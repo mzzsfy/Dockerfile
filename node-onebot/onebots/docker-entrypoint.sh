@@ -31,7 +31,7 @@ if [ ! -f /data/${QQ_Number}_token ]; then
     sed -i "/password/d" /data/config.yaml
   fi
 
-  (tail -f /tmp/.input )| onebots $QQ_Number | tee /tmp/.out &
+  (tail -f /tmp/.input )| onebots -f /data/config.yaml | tee /tmp/.out &
   kpid=$!
 
   ok='false'
@@ -83,4 +83,4 @@ fi
 
 rm -rf /tmp/*
 
-exec icqq $QQ_Number
+exec onebots -f /data/config.yaml
