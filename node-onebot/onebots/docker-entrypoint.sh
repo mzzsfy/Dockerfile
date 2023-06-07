@@ -4,13 +4,10 @@ if [ -z $QQ_Number ]; then
   exit 1
 fi
 if [ ! -f /data/config.yaml ]; then
+onebots > /dev/null
+mv config.yaml /data/config.yaml
 
-onebots -c /data/config.yaml > /dev/null &
-kpid=$!
-sleep 2
-kill $kpid
-
-sed -i "/123456789/123456789 /$QQ_Number /" /data/config.yaml
+sed -i "/123456789/s/123456789 /$QQ_Number /" /data/config.yaml
 
 if [ ! -z "$platform" ]; then
   sed -i "/platform/{s/[0-9]/$platform/}" /data/config.yaml
@@ -19,7 +16,7 @@ if [ ! -z "$token" ]; then
   sed -i "/access_token/{s/'[^']*'/$token/}" /data/config.yaml
 fi
 if [ ! -z "$ws_reverse" ]; then
-  sed -i "/ws_reverse/\[ \]/\[$ws_reverse\]/" /data/config.yaml
+  sed -i "/ws_reverse/s/\[ \]/\[$ws_reverse\]/" /data/config.yaml
 fi
 
 fi
