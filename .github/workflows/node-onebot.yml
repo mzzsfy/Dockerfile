@@ -7,7 +7,7 @@ jobs:
   build:
     strategy:
       matrix:
-        plugin: [oicq,icqq]
+        plugin: [oicq,onebots]
     runs-on: ubuntu-latest
     steps:
       - name: Check Out
