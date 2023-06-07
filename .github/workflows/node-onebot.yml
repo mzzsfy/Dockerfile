@@ -7,7 +7,7 @@ jobs:
   build:
     strategy:
       matrix:
-        plugin: [oicq,onebots]
+        plugin: [oicq,oicq-ffmpeg,onebots,onebots-ffmpeg]
     runs-on: ubuntu-latest
     steps:
       - name: Check Out
@@ -20,7 +20,16 @@ jobs:
 
       - name: ready
         run: |
-          cp -r ./node-onebot/${{ matrix.plugin }}/* ./
+          dirname=${{ matrix.plugin }}
+          ffmpeg=false
+          if [[ "$dirname" == *"-ffmpeg" ]] ; then
+            dirname=${dirname%-ffmpeg}
+            ffmpeg=true
+          fi
+          cp -r ./node-onebot/$dirname/* ./
+          if [ "$ffmpeg" = "true" ] ; then
+            mv Dockerfile-ffmpeg Dockerfile
+          fi
           chmod +x docker-entrypoint.sh
 
       # docker login
