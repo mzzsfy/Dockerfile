@@ -13,10 +13,10 @@ if [ ! -z "$platform" ]; then
   sed -i "/platform/{s/[0-9]/$platform/}" /data/config.yaml
 fi
 if [ ! -z "$token" ]; then
-  sed -i "/access_token/{s/'[^']*'/$token/}" /data/config.yaml
+  sed -i "/access_token/{s#'[^']*'#$token#}" /data/config.yaml
 fi
 if [ ! -z "$ws_reverse" ]; then
-  sed -i "/ws_reverse/s/\[ \]/\[$ws_reverse\]/" /data/config.yaml
+  sed -i "/ws_reverse/s#\[.*\]#[$ws_reverse]#" /data/config.yaml
 fi
 if [ ! -z "$onebotVersion" ]; then
   sed -i "/version/s/V\d+/V$onebotVersion/" /data/config.yaml
@@ -27,7 +27,7 @@ if [ ! -f /data/${QQ_Number}_token ]; then
   echo "" > /tmp/.input
   if [ ! -z "$QQ_Password" ]; then
     echo '使用密码登录'
-    sed -i "/password/s/abcedfghi/$QQ_Password/" /data/config.yaml
+    sed -i "/password/s#abcedfghi#$QQ_Password#" /data/config.yaml
   else
     echo '未设置环境变量QQ_Password 使用扫码登录'
     sed -i "/password/d" /data/config.yaml
@@ -83,4 +83,4 @@ fi
 
 rm -rf /tmp/*
 
-exec onebots -f /data/config.yaml
+exec onebots -c /data/config.yaml
