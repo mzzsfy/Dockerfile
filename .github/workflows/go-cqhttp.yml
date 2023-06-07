@@ -21,7 +21,7 @@ jobs:
       - name: ready
         run: |
           rm -rf {*,.[^.]*,..?*}
-          git clone --depth=1 https://github.com/Mrs4s/go-cqhttp.git
+          git clone --depth=1 https://github.com/Mrs4s/go-cqhttp.git .
           git fetch --tags --depth=10
           git checkout $(git tag -l | tac | grep -E '.*fix.*|v[0-9\.]+-[rc0-9]' | head -n 1)
           wget https://raw.githubusercontent.com/mzzsfy/Dockerfile/go-cqhttp/docker-entrypoint.sh -O docker-entrypoint.sh
