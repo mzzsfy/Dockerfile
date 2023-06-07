@@ -6,8 +6,8 @@ fi
 if [ ! -f /data/config.yaml ]; then
 onebots > /dev/null
 mv config.yaml /data/config.yaml
-
-sed -i "/123456789/s/123456789 /$QQ_Number /" /data/config.yaml
+fi
+sed -i "/123456789/s/123456789/$QQ_Number/" /data/config.yaml
 
 if [ ! -z "$platform" ]; then
   sed -i "/platform/{s/[0-9]/$platform/}" /data/config.yaml
@@ -18,11 +18,13 @@ fi
 if [ ! -z "$ws_reverse" ]; then
   sed -i "/ws_reverse/s/\[ \]/\[$ws_reverse\]/" /data/config.yaml
 fi
-
+if [ ! -z "$onebotVersion" ]; then
+  sed -i "/version/s/V\d+/V$onebotVersion/" /data/config.yaml
 fi
 
+
 if [ ! -f /data/${QQ_Number}_token ]; then
-  echo "\n" > /tmp/.input
+  echo "" > /tmp/.input
   if [ ! -z "$QQ_Password" ]; then
     echo '使用密码登录'
     sed -i "/password/s/abcedfghi/$QQ_Password/" /data/config.yaml
@@ -31,7 +33,7 @@ if [ ! -f /data/${QQ_Number}_token ]; then
     sed -i "/password/d" /data/config.yaml
   fi
 
-  (tail -f /tmp/.input )| onebots -f /data/config.yaml | tee /tmp/.out &
+  (tail -f /tmp/.input ) | onebots -f /data/config.yaml | tee /tmp/.out &
   kpid=$!
 
   ok='false'
