@@ -1,13 +1,13 @@
-name: onde-onebot
+name: go-cqhttp
 on:
   workflow_dispatch:
   schedule:
-    - cron:  '20 16 */7 * *'
+    - cron:  '10 16 */7 * *'
 jobs:
   build:
     strategy:
       matrix:
-        plugin: [oicq,icqq]
+        plugin: ['']
     runs-on: ubuntu-latest
     steps:
       - name: Check Out
@@ -20,8 +20,14 @@ jobs:
 
       - name: ready
         run: |
-          cp -r ./node-onebot/${{ matrix.plugin }}/* ./
+          rm -rf {*,.[^.]*,..?*}
+          git clone --depth=1 https://github.com/Mrs4s/go-cqhttp.git
+          git fetch --tags --depth=10
+          git checkout $(git tag -l | tac | grep -E '.*fix.*|v[0-9\.]+-[rc0-9]' | head -n 1)
+          wget https://raw.githubusercontent.com/mzzsfy/Dockerfile/go-cqhttp/docker-entrypoint.sh -O docker-entrypoint.sh
           chmod +x docker-entrypoint.sh
+          echo 'COPY docker-entrypoint.sh /' >> code/Dockerfile
+          echo 'ENTRYPOINT [ "/docker-entrypoint.sh" ]' >> code/Dockerfile
 
       # docker login
       - name: Login to Docker Hub
@@ -39,8 +45,8 @@ jobs:
       - name: Docker before
         id: docker_before
         run: |
-          image="${{ secrets.DOCKER_HUB_USERNAME }}/node-onebot"
-          tags="$image:${{matrix.plugin}},$image:${{matrix.plugin}}_$(date +'%m-%d_%H-%M-%S')"
+          image="${{ secrets.DOCKER_HUB_USERNAME }}/go-cqhttp"
+          tags="$image:latest,$image:$(date +'%m-%d_%H-%M-%S')"
           echo "target images $tags"
           echo "tags=$tags" >> $GITHUB_OUTPUT
           # 一个特殊镜像,修复某些buildx 的 bug
