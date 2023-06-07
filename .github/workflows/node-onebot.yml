@@ -41,6 +41,9 @@ jobs:
         run: |
           image="${{ secrets.DOCKER_HUB_USERNAME }}/node-onebot"
           tags="$image:${{matrix.plugin}},$image:${{matrix.plugin}}_$(date +'%m-%d_%H-%M-%S')"
+          if [["${{matrix.plugin}}"=="oicq"]] 
+            tags="$image:latest,$tags"
+          fi
           echo "target images $tags"
           echo "tags=$tags" >> $GITHUB_OUTPUT
           # 一个特殊镜像,修复某些buildx 的 bug
