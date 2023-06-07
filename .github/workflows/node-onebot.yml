@@ -41,7 +41,7 @@ jobs:
         run: |
           image="${{ secrets.DOCKER_HUB_USERNAME }}/node-onebot"
           tags="$image:${{matrix.plugin}},$image:${{matrix.plugin}}_$(date +'%m-%d_%H-%M-%S')"
-          if [["${{matrix.plugin}}"=="oicq"]] 
+          if [["${{matrix.plugin}}"=="oicq"]] ; then
             tags="$image:latest,$tags"
           fi
           echo "target images $tags"
