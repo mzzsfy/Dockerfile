@@ -5,9 +5,6 @@ on:
     - cron:  '10 16 */7 * *'
 jobs:
   build:
-    strategy:
-      matrix:
-        plugin: ['']
     runs-on: ubuntu-latest
     steps:
       - name: Check Out
@@ -26,8 +23,8 @@ jobs:
           git checkout $(git tag -l | tac | grep -E '.*fix.*|v[0-9\.]+-[rc0-9]' | head -n 1)
           wget https://raw.githubusercontent.com/mzzsfy/Dockerfile/main/go-cqhttp/docker-entrypoint.sh -O docker-entrypoint.sh
           chmod +x docker-entrypoint.sh
-          echo 'COPY docker-entrypoint.sh /' >> code/Dockerfile
-          echo 'ENTRYPOINT [ "/docker-entrypoint.sh" ]' >> code/Dockerfile
+          echo 'COPY docker-entrypoint.sh /' >> Dockerfile
+          echo 'ENTRYPOINT [ "/docker-entrypoint.sh" ]' >> Dockerfile
 
       # docker login
       - name: Login to Docker Hub
