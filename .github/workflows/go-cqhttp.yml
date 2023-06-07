@@ -2,7 +2,7 @@ name: go-cqhttp
 on:
   workflow_dispatch:
   schedule:
-    - cron:  '10 16 */7 * *'
+    - cron: '0 16 * * 6'
 jobs:
   build:
     runs-on: ubuntu-latest
