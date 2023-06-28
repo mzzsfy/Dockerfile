@@ -7,7 +7,7 @@ jobs:
   build:
     strategy:
       matrix:
-        plugin: [oicq,oicq-ffmpeg,onebots,onebots-ffmpeg]
+        plugin: [onebots,onebots-ffmpeg]
     runs-on: ubuntu-latest
     steps:
       - name: Check Out
