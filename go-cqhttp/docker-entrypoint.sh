@@ -23,6 +23,7 @@ s2='\n      reconnect-interval: 3000\n      middlewares:\n        <<: *default'
   echo $ws_url | tr ',' '\n' | xargs -n1 -I {} echo -e "$s1{}$s2" >> config.yml
 fi
 
+echo "自动化配置完成,如果需要手动操作,请使用 docker attach cq-http 开始交互"
 fi
 
 
