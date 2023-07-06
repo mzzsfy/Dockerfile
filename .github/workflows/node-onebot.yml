@@ -49,9 +49,9 @@ jobs:
         id: docker_before
         run: |
           image="${{ secrets.DOCKER_HUB_USERNAME }}/node-onebot"
-          tags="$image:${{matrix.plugin}},$image:${{matrix.plugin}}_$(date +'%m-%d_%H-%M-%S')"
+          tags="$image:${{matrix.plugin}}_$(date +'%m-%d_%H-%M-%S'),$image:${{matrix.plugin}}"
           if [ "${{matrix.plugin}}" = "onebots" ] ; then
-            tags="$image:latest,$tags"
+            tags="$tags,$image:latest"
           fi
           echo "target images $tags"
           echo "tags=$tags" >> $GITHUB_OUTPUT

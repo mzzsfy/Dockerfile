@@ -40,7 +40,7 @@ jobs:
         id: docker_before
         run: |
           image="${{ secrets.DOCKER_HUB_USERNAME }}/caddy-dns"
-          tags="$image:${{matrix.plugin}},$image:${{matrix.plugin}}_$(date +'%m-%d_%H-%M-%S')"
+          tags="$image:${{matrix.plugin}}_$(date +'%m-%d_%H-%M-%S'),$image:${{matrix.plugin}}"
           echo "target images $tags"
           echo "tags=$tags" >> $GITHUB_OUTPUT
           # 一个特殊镜像,修复某些buildx 的 bug
