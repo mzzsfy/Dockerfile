@@ -2,7 +2,7 @@ name: caddy
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 16 * * 1'
+    - cron: '0 16 1,15 * *'
 jobs:
   build:
     strategy:
