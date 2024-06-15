@@ -5,6 +5,8 @@
 搭配 https://github.com/mzzsfy/Actions-buildUtils 使用
 
 
-## cf docker image镜像
+## cf worker 相关脚本
 
-worker.js
+包含但不限: 自建docker镜像加速仓库,反代,socks5代理
+
+[cf-worker 目录](./cf-worker)
