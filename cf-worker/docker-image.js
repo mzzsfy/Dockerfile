@@ -3,10 +3,21 @@
 //环境变量whitelist控制允许访问的Docker仓库,默认为空允许全部,格式为:"xxx/xxx",官方为library
 //例: library/,mzzsfy/,abc/bcd 为允许访问官方和mzzsfy所有镜像,外加abc/bcd这个镜像
 
-// Docker镜像仓库主机地址
-const hub_host = 'registry-1.docker.io'
-// Docker认证服务器地址
-const auth_url = 'auth.docker.io'
+
+// 在cf部署中,使用泛域名或多触发器可以让同一个脚本可以支持多个镜像仓库,
+// 如: k8s.xxx.xxx为访问k8s镜像仓库,docker.xxx.xxx为访问docker主镜像仓库
+const customizeRoutes = {
+    "quay": "quay.io",
+    "gcr": "gcr.io",
+    "k8s-gcr": "k8s.gcr.io",
+    "k8s": "registry.k8s.io",
+    "ghcr": "ghcr.io",
+    "cloudsmith": "docker.cloudsmith.io",
+    "docker": "registry-1.docker.io",
+};
+
+// 默认使用的镜像仓库
+const defaultHost = 'docker'
 
 /** @type {RequestInit} */
 const PREFLIGHT_INIT = {
@@ -53,9 +64,15 @@ function token(request, url, env, ctx) {
             )
         }
     }
+    let paths = url.pathname.split('/');
+    if (paths[paths.length - 1].includes('.')) {
+        let oldUrl = url.href;
+        url.hostname = paths[paths.length - 1];
+        url.pathname = paths.slice(0, paths.length - 1).join('/')
+        console.log("修改host", oldUrl, url.href)
+    }
     let token_parameter = {
         headers: {
-            'Host': auth_url,
             'User-Agent': getReqHeader("User-Agent"),
             'Accept': getReqHeader("Accept"),
             'Accept-Language': getReqHeader("Accept-Language"),
@@ -64,7 +81,7 @@ function token(request, url, env, ctx) {
             'Cache-Control': 'max-age=0'
         }
     };
-    return fetch(new Request('https://' + auth_url + url.pathname + url.search, request), token_parameter)
+    return fetch(new Request(url.href, request), token_parameter)
 }
 
 export default {
@@ -74,10 +91,10 @@ export default {
         let url = new URL(request.url); // 解析请求URL
         let workers_url = `https://${url.hostname}`;
         const pathname = url.pathname;
-        if (pathname === '/token') {
-            return token(request, url, env, ctx)
-        }
         if (!pathname.startsWith('/v2/')) {
+            if (pathname.includes('/token') && url.searchParams.has('scope')) {
+                return token(request, url, env, ctx)
+            }
             return new Response('404 Not Found', {
                 status: 404,
                 headers: {},
@@ -99,13 +116,11 @@ export default {
                 )
             }
         }
-        // 更改请求的主机名
-        url.hostname = hub_host;
-
+        let hostname = url.hostname.split('.')[0];
+        url.hostname = customizeRoutes[hostname] || customizeRoutes[defaultHost];
         // 构造请求参数
         let parameter = {
             headers: {
-                'Host': hub_host,
                 'User-Agent': getReqHeader("User-Agent"),
                 'Accept': getReqHeader("Accept"),
                 'Accept-Language': getReqHeader("Accept-Language"),
@@ -123,12 +138,21 @@ export default {
 
         // 发起请求并处理响应
         let res = await fetch(new Request(url, request), parameter)
-
         // 修改 Www-Authenticate 头
         let auth = res.headers.get("Www-Authenticate");
         if (auth) {
             const newHeader = new Headers(res.headers)
-            newHeader.set("Www-Authenticate", auth.replace(/https?:\/\/[a-zA-Z0-9\-.]+/, workers_url));
+            let newAuth = auth.replace(/https?:\/\/([a-zA-Z0-9\-.]+)([\w/]+)/, workers_url + "$2/$1");
+            newHeader.set("Www-Authenticate", newAuth);
+            console.log("修改Authenticate", auth, "->", newAuth)
+            if (pathname === '/v2/' && url.searchParams.size === 0) {
+                let t = await res.text();
+                console.log("res", t)
+                return new Response(t, {
+                    status: res.status,
+                    headers: newHeader
+                })
+            }
             return new Response(res.body, {
                 status: res.status,
                 headers: newHeader
