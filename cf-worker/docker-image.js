@@ -56,6 +56,9 @@ function token(request, url, env, ctx) {
     const getReqHeader = (key) => request.headers.get(key);
     if (env['whitelist'] && url.searchParams.get('scope')) {
         let name = url.searchParams.get('scope').split(':')[1];
+        if (!name.includes('/')) {
+            name = 'library/' + name
+        }
         if (!env['whitelist'].split(',').some(e => name.startsWith(e))) {
             console.log("非白名单镜像,拒绝访问", name)
             return new Response(
@@ -108,6 +111,9 @@ export default {
                 l = 22
             }
             let name = pathname.substring(4).substring(0, pathname.length - 4 - l);
+            if (!name.includes('/')) {
+                name = 'library/' + name
+            }
             if (!env['whitelist'].split(',').some(e => name.startsWith(e))) {
                 console.log("非白名单镜像,拒绝访问", name)
                 return new Response(
