@@ -93,7 +93,7 @@ export default {
         let path1 = url.pathname.substring(1)
         for (const [path, [mirror, replace]] of Object.entries(custom)) {
             if (path1.startsWith(path)) {
-                return await fetch(mirror + path1.replace(path, replace), {
+                return await fetch(mirror + path1.replace(path, replace)+url.search, {
                     headers: request.headers,
                     method: request.method,
                     body: request.body,
