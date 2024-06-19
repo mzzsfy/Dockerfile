@@ -64,14 +64,14 @@ deb ${hostname}/ubuntu jammy-security main restricted
 
 debian11:
 修改/etc/apt/sources.list为
-deb ${hostname}}debian/ bullseye main non-free contrib
-deb-src ${hostname}debian/ bullseye main non-free contrib
-deb ${hostname}debian-security/ bullseye-security main
-deb-src ${hostname}debian-security/ bullseye-security main
-deb ${hostname}debian/ bullseye-updates main non-free contrib
-deb-src ${hostname}debian/ bullseye-updates main non-free contrib
-deb ${hostname}debian/ bullseye-backports main non-free contrib
-deb-src ${hostname}debian/ bullseye-backports main non-free contrib
+deb ${hostname}/debian/ bullseye main non-free contrib
+deb-src ${hostname}/debian/ bullseye main non-free contrib
+deb ${hostname}/debian-security/ bullseye-security main
+deb-src ${hostname}/debian-security/ bullseye-security main
+deb ${hostname}/debian/ bullseye-updates main non-free contrib
+deb-src ${hostname}/debian/ bullseye-updates main non-free contrib
+deb ${hostname}/debian/ bullseye-backports main non-free contrib
+deb-src ${hostname}/debian/ bullseye-backports main non-free contrib
 
 python pypi:
 执行命令: pip config --global set global.index-url ${hostname}/pypi
