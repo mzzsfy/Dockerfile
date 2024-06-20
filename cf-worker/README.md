@@ -5,4 +5,4 @@
 - [通用反代](./reverse-proxy.js) 通过环境变量控制,反代任意网站,支持ip,地域黑名单 [泛域名版本](./reverse-proxy-domain.js)
 - [vless+ws](./vless-ws.js) 上游直连 [上游为socks5使用这个](./vless-ws-socks5upstream.js) 
 
-
+[泛域名教程.md](./泛域名教程.md)
