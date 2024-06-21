@@ -3,6 +3,9 @@
 //环境变量whitelist控制允许访问的Docker仓库,默认为空允许全部,格式为:"xxx/xxx",官方为library
 //例: library/,mzzsfy/,abc/bcd 为允许访问官方和mzzsfy所有镜像,外加abc/bcd这个镜像
 
+//环境变量 strictDomain=true 表示仅允许使用已知的域名访问
+//环境变量 defaultIndex设置默认主页上游地址,如: https://hub.docker.com
+
 
 // 在cf部署中,使用泛域名或多触发器可以让同一个脚本可以支持多个镜像仓库,
 // 如: k8s.xxx.xxx为访问k8s镜像仓库,docker.xxx.xxx为访问docker主镜像仓库
@@ -61,10 +64,7 @@ function token(request, url, env, ctx) {
         }
         if (!env['whitelist'].split(',').some(e => name.startsWith(e))) {
             console.log("非白名单镜像,拒绝访问", name)
-            return new Response(
-                'access denied',
-                {status: 404}
-            )
+            return new Response('access denied', {status: 404})
         }
     }
     let paths = url.pathname.split('/');
@@ -89,19 +89,45 @@ function token(request, url, env, ctx) {
 
 export default {
     async fetch(request, env, ctx) {
+        let url = new URL(request.url); // 解析请求URL
+        let hostname = url.hostname.split('.')[0];
+        let route = customizeRoutes[hostname];
+        if (!route && env['strictDomain'] === 'true') {
+            return new Response('access denied', {
+                status: 401, headers: {},
+            });
+        }
+        route = route || customizeRoutes[defaultHost]
         const getReqHeader = (key) => request.headers.get(key); // 获取请求头
 
-        let url = new URL(request.url); // 解析请求URL
         let workers_url = `https://${url.hostname}`;
         const pathname = url.pathname;
-        if (!pathname.startsWith('/v2/')) {
-            if (pathname.includes('/token') && url.searchParams.has('scope')) {
-                return token(request, url, env, ctx)
+        //浏览器访问
+        if (pathname === '/' || getReqHeader('Origin') || getReqHeader('Referer')) {
+            if (env['defaultIndex']) {
+                let url1 = new URL(env['defaultIndex']);
+                if (url.pathname === "/" && url1.pathname !== '/') {
+                    return new Response('', {
+                        status: 302, headers: {
+                            'location': url1.pathname,
+                        }
+                    })
+                }
+                url1.pathname = url.pathname
+                url1.search = url.search
+                return fetch(url1.href, {
+                    redirect: 'follow',
+                    headers: request.headers,
+                    method: request.method,
+                    body: request.body,
+                })
             }
-            return new Response('404 Not Found', {
-                status: 404,
-                headers: {},
+            return new Response('ok', {
+                status: 200, headers: {},
             });
+        }
+        if (pathname.includes('/token') && url.searchParams.has('scope')) {
+            return token(request, url, env, ctx)
         }
         if (env['whitelist']) {
             let l = 0
@@ -116,14 +142,10 @@ export default {
             }
             if (!env['whitelist'].split(',').some(e => name.startsWith(e))) {
                 console.log("非白名单镜像,拒绝访问", name)
-                return new Response(
-                    'access denied',
-                    {status: 403}
-                )
+                return new Response('access denied', {status: 403})
             }
         }
-        let hostname = url.hostname.split('.')[0];
-        url.hostname = customizeRoutes[hostname] || customizeRoutes[defaultHost];
+        url.hostname = route;
         // 构造请求参数
         let parameter = {
             headers: {
@@ -133,8 +155,7 @@ export default {
                 'Accept-Encoding': getReqHeader("Accept-Encoding"),
                 'Connection': 'keep-alive',
                 'Cache-Control': 'max-age=0'
-            },
-            cacheTtl: 3600 // 缓存时间
+            }, cacheTtl: 3600 // 缓存时间
         };
 
         // 添加Authorization头
@@ -155,13 +176,11 @@ export default {
                 let t = await res.text();
                 console.log("res", t)
                 return new Response(t, {
-                    status: res.status,
-                    headers: newHeader
+                    status: res.status, headers: newHeader
                 })
             }
             return new Response(res.body, {
-                status: res.status,
-                headers: newHeader
+                status: res.status, headers: newHeader
             })
         }
         // 处理重定向
@@ -182,9 +201,7 @@ function httpHandler(req, pathname) {
     const reqHdrRaw = req.headers
 
     // 处理预检请求
-    if (req.method === 'OPTIONS' &&
-        reqHdrRaw.has('access-control-request-headers')
-    ) {
+    if (req.method === 'OPTIONS' && reqHdrRaw.has('access-control-request-headers')) {
         return new Response(null, PREFLIGHT_INIT)
     }
 
@@ -196,10 +213,7 @@ function httpHandler(req, pathname) {
 
     /** @type {RequestInit} */
     const reqInit = {
-        method: req.method,
-        headers: reqHdrNew,
-        redirect: 'follow',
-        body: req.body
+        method: req.method, headers: reqHdrNew, redirect: 'follow', body: req.body
     }
     return proxy(urlObj, reqInit, rawLen)
 }
@@ -222,8 +236,7 @@ async function proxy(urlObj, reqInit, rawLen) {
 
         if (badLen) {
             return makeRes(res.body, 400, {
-                '--error': `bad len: ${newLen}, except: ${rawLen}`,
-                'access-control-expose-headers': '--error',
+                '--error': `bad len: ${newLen}, except: ${rawLen}`, 'access-control-expose-headers': '--error',
             })
         }
     }
@@ -238,7 +251,6 @@ async function proxy(urlObj, reqInit, rawLen) {
     resHdrNew.delete('clear-site-data')
 
     return new Response(res.body, {
-        status,
-        headers: resHdrNew
+        status, headers: resHdrNew
     })
 }
