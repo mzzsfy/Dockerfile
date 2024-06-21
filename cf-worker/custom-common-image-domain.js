@@ -58,23 +58,23 @@ ${allPaths().map(([path, target]) => "域名: https://" + path + '.' + baseHostn
 
 ubuntu22.04:
 修改/etc/apt/sources.list为
-deb https://ubuntu.${baseHostname} jammy main restricted
-deb https://ubuntu.${baseHostname} jammy-updates main restricted
-deb https://ubuntu.${baseHostname} jammy-security main restricted
+deb https://ubuntu.${baseHostname}/ubuntu jammy main restricted
+deb https://ubuntu.${baseHostname}/ubuntu jammy-updates main restricted
+deb https://ubuntu.${baseHostname}/ubuntu jammy-security main restricted
 
 debian11:
 修改/etc/apt/sources.list为
-deb https://debian.${baseHostname} bullseye main non-free contrib
-deb-src https://debian-security.${baseHostname} bullseye main non-free contrib
-deb https://debian.${baseHostname} bullseye-security main
-deb-src https://debian-security.${baseHostname} bullseye-security main
-deb https://debian.${baseHostname} bullseye-updates main non-free contrib
-deb-src https://debian-security.${baseHostname} bullseye-updates main non-free contrib
-deb https://debian.${baseHostname} bullseye-backports main non-free contrib
-deb-src https://debian-security.${baseHostname} bullseye-backports main non-free contrib
+deb https://debian.${baseHostname}/debian bullseye main non-free contrib
+deb-src https://debian-security.${baseHostname}/debian-security bullseye main non-free contrib
+deb https://debian.${baseHostname}/debian bullseye-security main
+deb-src https://debian-security.${baseHostname}/debian-security bullseye-security main
+deb https://debian.${baseHostname}/debian bullseye-updates main non-free contrib
+deb-src https://debian-security.${baseHostname}/debian-security bullseye-updates main non-free contrib
+deb https://debian.${baseHostname}/debian bullseye-backports main non-free contrib
+deb-src https://debian-security.${baseHostname}/debian-security bullseye-backports main non-free contrib
 
 python pypi:
-执行命令: pip config --global set global.index-url https://pypi.${baseHostname}
+执行命令: pip config --global set global.index-url https://pypi.${baseHostname}/simple
 </pre>
 </body>
 </html>
