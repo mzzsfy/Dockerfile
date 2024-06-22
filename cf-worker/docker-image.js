@@ -1,5 +1,3 @@
-'use strict'
-
 //环境变量whitelist控制允许访问的Docker仓库,默认为空允许全部,格式为:"xxx/xxx",官方为library
 //例: library/,mzzsfy/,abc/bcd 为允许访问官方和mzzsfy所有镜像,外加abc/bcd这个镜像
 
@@ -74,17 +72,7 @@ function token(request, url, env, ctx) {
         url.pathname = paths.slice(0, paths.length - 1).join('/')
         console.log("修改host", oldUrl, url.href)
     }
-    let token_parameter = {
-        headers: {
-            'User-Agent': getReqHeader("User-Agent"),
-            'Accept': getReqHeader("Accept"),
-            'Accept-Language': getReqHeader("Accept-Language"),
-            'Accept-Encoding': getReqHeader("Accept-Encoding"),
-            'Connection': 'keep-alive',
-            'Cache-Control': 'max-age=0'
-        }
-    };
-    return fetch(new Request(url.href, request), token_parameter)
+    return fetch(url.href, request)
 }
 
 export default {
@@ -126,7 +114,7 @@ export default {
                 status: 200, headers: {},
             });
         }
-        if (pathname.includes('/token') && url.searchParams.has('scope')) {
+        if (pathname.includes('/token') && (url.searchParams.has('scope') || url.searchParams.has('service'))) {
             return token(request, url, env, ctx)
         }
         if (env['whitelist']) {
@@ -145,26 +133,18 @@ export default {
                 return new Response('access denied', {status: 403})
             }
         }
-        url.hostname = route;
-        // 构造请求参数
-        let parameter = {
-            headers: {
-                'User-Agent': getReqHeader("User-Agent"),
-                'Accept': getReqHeader("Accept"),
-                'Accept-Language': getReqHeader("Accept-Language"),
-                'Accept-Encoding': getReqHeader("Accept-Encoding"),
-                'Connection': 'keep-alive',
-                'Cache-Control': 'max-age=0'
-            }, cacheTtl: 3600 // 缓存时间
-        };
-
-        // 添加Authorization头
-        if (request.headers.has("Authorization")) {
-            parameter.headers.Authorization = getReqHeader("Authorization");
+        let body, body2;
+        if (request.body) {
+            [body, body2] = request.body.tee()
         }
+        url.hostname = route;
 
         // 发起请求并处理响应
-        let res = await fetch(new Request(url, request), parameter)
+        let res = await fetch(url.href, {
+            method: request.method,
+            body: body,
+            headers: request.headers,
+        })
         // 修改 Www-Authenticate 头
         let auth = res.headers.get("Www-Authenticate");
         if (auth) {
@@ -184,39 +164,35 @@ export default {
             })
         }
         // 处理重定向
-        if (res.headers.get("Location")) {
-            console.log('重定向', res.headers.get("Location"));
-            return httpHandler(request, res.headers.get("Location"))
+        let location = res.headers.get("Location");
+        if (location) {
+            console.log('重定向', location);
+
+            // 处理预检请求
+            if (request.method === 'OPTIONS' && request.headers.has('access-control-request-headers')) {
+                return new Response(null, PREFLIGHT_INIT)
+            }
+
+            const urlObj = newUrl(location)
+            if (!urlObj) {
+                let url1 = new URL(url.href)
+                if (location.startsWith('/')) {
+                    url1.pathname = location
+                } else {
+                    url1.pathname = url1.pathname + location
+                }
+                url = url1
+            }
+            return proxy(urlObj, {
+                method: request.method,
+                headers: request.headers,
+                body: body2,
+                redirect: 'follow',
+            }, '')
         }
         return res
     }
 };
-
-/**
- * 处理HTTP请求
- * @param {Request} req 请求对象
- * @param {string} pathname 请求路径
- */
-function httpHandler(req, pathname) {
-    const reqHdrRaw = req.headers
-
-    // 处理预检请求
-    if (req.method === 'OPTIONS' && reqHdrRaw.has('access-control-request-headers')) {
-        return new Response(null, PREFLIGHT_INIT)
-    }
-
-    let rawLen = ''
-
-    const reqHdrNew = new Headers(reqHdrRaw)
-
-    const urlObj = newUrl(pathname)
-
-    /** @type {RequestInit} */
-    const reqInit = {
-        method: req.method, headers: reqHdrNew, redirect: 'follow', body: req.body
-    }
-    return proxy(urlObj, reqInit, rawLen)
-}
 
 /**
  * 代理请求
