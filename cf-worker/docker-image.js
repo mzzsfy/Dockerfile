@@ -54,7 +54,6 @@ function newUrl(urlStr) {
 }
 
 function token(request, url, env, ctx) {
-    const getReqHeader = (key) => request.headers.get(key);
     if (env['whitelist'] && url.searchParams.get('scope')) {
         let name = url.searchParams.get('scope').split(':')[1];
         if (!name.includes('/')) {
@@ -72,7 +71,12 @@ function token(request, url, env, ctx) {
         url.pathname = paths.slice(0, paths.length - 1).join('/')
         console.log("修改host", oldUrl, url.href)
     }
-    return fetch(url.href, request)
+    return fetch(url.href, {
+        redirect: 'follow',
+        headers: request.headers,
+        method: request.method,
+        body: request.body
+    })
 }
 
 export default {
