@@ -40,7 +40,7 @@ function allPaths() {
 }
 
 function indexHtml(requestUrl) {
-    let hostname = "https://"+requestUrl.hostname;
+    let hostname = "https://" + requestUrl.hostname;
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -79,7 +79,8 @@ python pypi:
 </pre>
 </body>
 </html>
-`}
+`
+}
 
 export default {
     async fetch(request, env, ctx) {
@@ -93,7 +94,7 @@ export default {
         let path1 = url.pathname.substring(1)
         for (const [path, [mirror, replace]] of Object.entries(custom)) {
             if (path1.startsWith(path)) {
-                return await fetch(mirror + path1.replace(path, replace)+url.search, {
+                return await fetch(mirror + path1.replace('/' + path, '/' + replace) + url.search, {
                     headers: request.headers,
                     method: request.method,
                     body: request.body,

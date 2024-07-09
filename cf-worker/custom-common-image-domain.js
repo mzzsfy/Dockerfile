@@ -30,6 +30,7 @@ const custom = {
     'pypi': 'https://pypi.org',
     'rust': 'https://static.rust-lang.org',
     'docker-ce': 'https://download.docker.com',
+    'alpine': 'https://dl-cdn.alpinelinux.org',
 }
 
 function allPaths() {
