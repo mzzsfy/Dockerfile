@@ -94,9 +94,11 @@ export default {
         let path1 = url.pathname.substring(1)
         for (const [path, [mirror, replace]] of Object.entries(custom)) {
             if (path1.startsWith(path)) {
-                let target = mirror + path1.replace('/' + path, '/' + replace) + url.search
+                let target
                 if (!replace) {
-                    target = mirror + '/' + path1 + url.search
+                    target = mirror + url.pathname + url.search
+                } else {
+                    target = mirror + url.pathname.replace('/' + path, '/' + replace) + url.search
                 }
                 return await fetch(target, {
                     headers: request.headers,
