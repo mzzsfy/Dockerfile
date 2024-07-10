@@ -96,10 +96,11 @@ export default {
             if (path1.startsWith(path)) {
                 let target
                 if (!replace) {
-                    target = mirror + url.pathname + url.search
+                    target = mirror + url.pathname.replace('/' + path, '') + url.search
                 } else {
                     target = mirror + url.pathname.replace('/' + path, '/' + replace) + url.search
                 }
+                console.log(url.href + '->', target)
                 return await fetch(target, {
                     headers: request.headers,
                     method: request.method,
