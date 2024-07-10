@@ -23,7 +23,7 @@ const custom = {
     'archlinuxarm': ['http://dk.mirror.archlinuxarm.org', ''],
     'archlinux': ['https://mirror.pkgbuild.com', ''],
     'fedora': ['https://ap.edge.kernel.org', 'fedora'],
-    'OpenBSD': ['https://cdn.openbsd.org', 'pub/OpenBSD'],
+    'openbsd': ['https://cdn.openbsd.org', 'pub/OpenBSD'],
     'opensuse': ['http://download.opensuse.org', ''],
     'freebsd': ['https://download.freebsd.org', ''],
     'pypi': ['https://pypi.org', 'simple'],
@@ -94,7 +94,11 @@ export default {
         let path1 = url.pathname.substring(1)
         for (const [path, [mirror, replace]] of Object.entries(custom)) {
             if (path1.startsWith(path)) {
-                return await fetch(mirror + path1.replace('/' + path, '/' + replace) + url.search, {
+                let target = mirror + path1.replace('/' + path, '/' + replace) + url.search
+                if (!replace) {
+                    target = mirror + '/' + path1 + url.search
+                }
+                return await fetch(target, {
                     headers: request.headers,
                     method: request.method,
                     body: request.body,
