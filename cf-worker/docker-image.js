@@ -126,27 +126,31 @@ export default {
             return token(request, url, env, ctx)
         }
         let l = 0
-        if (pathname.endsWith('/blobs/sha256:REDACTED')) {
-            l = 22
-        } else {
+        {
             // v2/xxx/xxx/manifests/xxxx
-            let strings = pathname.split('/');
-            if (strings[strings.length - 2] === 'manifests') {
-                l = 11 + strings[strings.length - 1].length
+            let idx = pathname.lastIndexOf('/');
+            if (pathname.substring(idx - 10, idx + 1) === '/manifests/') {
+                l = pathname.length - idx + 10
+            }
+            // v2/xxx/xxx/blobs/sha256:xxxxx
+            else if (pathname.includes('/blobs/sha256:')) {
+                l = pathname.length - pathname.indexOf('/blobs/sha256:')
             }
         }
-        let name = pathname.substring(4).substring(0, pathname.length - 4 - l);
-        if (name && !name.includes('/')) {
-            let newPathname = pathname.substring(0, 4) + 'library/' + name + pathname.substring(4 + name.length)
-            url.pathname = newPathname
-            console.log("修改镜像名", pathname, "->", newPathname)
-            pathname = url.pathname
-            name = 'library/' + name
-        }
-        if (name && env['whitelist']) {
-            if (!env['whitelist'].split(',').some(e => name.startsWith(e))) {
-                console.log("非白名单镜像,拒绝访问", name)
-                return new Response('access denied', {status: 403})
+        if (l > 0) {
+            let name = pathname.substring(4).substring(0, pathname.length - 4 - l);
+            if (name && !name.includes('/')) {
+                let newPathname = pathname.substring(0, 4) + 'library/' + name + pathname.substring(4 + name.length)
+                url.pathname = newPathname
+                console.log("修改镜像名", pathname, "->", newPathname)
+                pathname = url.pathname
+                name = 'library/' + name
+            }
+            if (name && env['whitelist']) {
+                if (!env['whitelist'].split(',').some(e => name.startsWith(e))) {
+                    console.log("非白名单镜像,拒绝访问", name)
+                    return new Response('access denied', {status: 403})
+                }
             }
         }
         let body, body2;
