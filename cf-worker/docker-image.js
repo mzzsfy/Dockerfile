@@ -126,10 +126,14 @@ export default {
             return token(request, url, env, ctx)
         }
         let l = 0
-        if (pathname.endsWith('/manifests/latest')) {
-            l = 17
-        } else if (pathname.endsWith('/blobs/sha256:REDACTED')) {
+        if (pathname.endsWith('/blobs/sha256:REDACTED')) {
             l = 22
+        } else {
+            // v2/xxx/xxx/manifests/xxxx
+            let strings = pathname.split('/');
+            if (strings[strings.length - 2] === 'manifests') {
+                l = 11 + strings[strings.length - 1].length
+            }
         }
         let name = pathname.substring(4).substring(0, pathname.length - 4 - l);
         if (name && !name.includes('/')) {
