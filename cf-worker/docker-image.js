@@ -54,11 +54,15 @@ function newUrl(urlStr) {
 }
 
 function token(request, url, env, ctx) {
-    if (env['whitelist'] && url.searchParams.get('scope')) {
-        let name = url.searchParams.get('scope').split(':')[1];
-        if (!name.includes('/')) {
-            name = 'library/' + name
-        }
+    let scope = url.searchParams.get('scope');
+    let name = scope.split(':')[1];
+    if (!name.includes('/')) {
+        let oldHref = url.href;
+        url.searchParams.set('scope', scope.replace(':' + name, ':library/' + name))
+        console.log("替换镜像名称", oldHref, url.href)
+        name = 'library/' + name
+    }
+    if (env['whitelist'] && scope) {
         if (!env['whitelist'].split(',').some(e => name.startsWith(e))) {
             console.log("非白名单镜像,拒绝访问", name)
             return new Response('access denied', {status: 404})
@@ -93,7 +97,7 @@ export default {
         const getReqHeader = (key) => request.headers.get(key); // 获取请求头
 
         let workers_url = `https://${url.hostname}`;
-        const pathname = url.pathname;
+        let pathname = url.pathname;
         //浏览器访问
         if (pathname === '/' || getReqHeader('Origin') || getReqHeader('Referer')) {
             if (env['defaultIndex']) {
@@ -121,17 +125,21 @@ export default {
         if (pathname.includes('/token') && (url.searchParams.has('scope') || url.searchParams.has('service'))) {
             return token(request, url, env, ctx)
         }
-        if (env['whitelist']) {
-            let l = 0
-            if (pathname.endsWith('/manifests/latest')) {
-                l = 17
-            } else if (pathname.endsWith('/blobs/sha256:REDACTED')) {
-                l = 22
-            }
-            let name = pathname.substring(4).substring(0, pathname.length - 4 - l);
-            if (!name.includes('/')) {
-                name = 'library/' + name
-            }
+        let l = 0
+        if (pathname.endsWith('/manifests/latest')) {
+            l = 17
+        } else if (pathname.endsWith('/blobs/sha256:REDACTED')) {
+            l = 22
+        }
+        let name = pathname.substring(4).substring(0, pathname.length - 4 - l);
+        if (name && !name.includes('/')) {
+            let newPathname = pathname.substring(0, 4) + 'library/' + name + pathname.substring(4 + name.length)
+            url.pathname = newPathname
+            console.log("修改镜像名", pathname, "->", newPathname)
+            pathname = url.pathname
+            name = 'library/' + name
+        }
+        if (name && env['whitelist']) {
             if (!env['whitelist'].split(',').some(e => name.startsWith(e))) {
                 console.log("非白名单镜像,拒绝访问", name)
                 return new Response('access denied', {status: 403})
