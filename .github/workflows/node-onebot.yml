@@ -1,8 +1,8 @@
 name: onde-onebot
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 16 * * 6'
+#  schedule:
+#    - cron: '0 16 * * 6'
 jobs:
   build:
     strategy:
