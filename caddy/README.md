@@ -3,7 +3,7 @@
 build log  
 <https://github.com/mzzsfy/Dockerfile/actions/workflows/caddy.yml>
 
-add more dns plugin see  
+more dns plugin
 <https://github.com/mzzsfy/Dockerfile/blob/main/.github/workflows/caddy.yml#L10>
 
 all tags: cloudflare,alidns,azure,dnspod,googleclouddns,duckdns
@@ -15,3 +15,4 @@ docker run -it -name caddy mzzsfy/caddy-dns:alidns
 
 docker run -it -name caddy mzzsfy/caddy-dns:cloudflare
 ```
+
