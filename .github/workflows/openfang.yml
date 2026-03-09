@@ -2,7 +2,7 @@ name: openfang
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 7 * * *'
+    - cron: '0 4 * * *'
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -57,4 +57,5 @@ jobs:
       # 打印 docker 镜像 SHA256 Hash 值
       - name: Image digest
         run: echo ${{ steps.docker_build.outputs.digest }}
+
 
