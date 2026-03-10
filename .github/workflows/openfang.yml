@@ -37,7 +37,7 @@ jobs:
         id: docker_before
         run: |
           image="${{ secrets.DOCKER_HUB_USERNAME }}/openfang"
-          tags="$image:${{matrix.plugin}}_$(date +'%y-%m-%d_%H-%M'),$image:${{matrix.plugin}}"
+          tags="$image:$(date +'%y-%m-%d_%H-%M'),$image:latest"
           echo "target images $tags"
           echo "tags=$tags" >> $GITHUB_OUTPUT
           # 一个特殊镜像,修复某些buildx 的 bug
@@ -57,5 +57,6 @@ jobs:
       # 打印 docker 镜像 SHA256 Hash 值
       - name: Image digest
         run: echo ${{ steps.docker_build.outputs.digest }}
+
 
 
