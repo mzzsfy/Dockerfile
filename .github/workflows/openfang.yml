@@ -2,7 +2,7 @@ name: openfang
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 4 * * *'
+    - cron: '0 4 */3 * *'
 jobs:
   build:
     runs-on: ubuntu-latest
