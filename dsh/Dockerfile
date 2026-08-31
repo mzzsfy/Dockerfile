@@ -5,7 +5,7 @@ RUN npm i -g @deepseek-ai/dsh pnpm \
     && dsh plugin --profile web add dsh-web-startup-auth < /dev/null \
     && npm cache clean -f
 
-VOLUME ["/root/.dsh","/data"]
+VOLUME ["/root/.dsh"]
 
 EXPOSE 3080
 
