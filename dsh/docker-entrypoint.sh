@@ -1,9 +1,19 @@
 #!/bin/sh
-# 运行时自愈:profile 缺内置插件时从镜像内模板补齐,防止挂载卷覆盖 build 时数据
+# 首次启动按 bundle 注册探测内置插件,缺失则在线安装,已装则跳过
 home="${DSH_HOME:-/root/.dsh}"
-if [ ! -e "$home/profiles/web/node_modules/dsh-web-startup-auth" ]; then
-  echo 'first startup copy config'
-  mkdir -p "$home"
-  cp -a -n /opt/dsh-profile/. "$home/"
-fi
+pkg="$home/profiles/web/package.json"
+for p in dshmarket dsh-web-startup-auth; do
+  node -e '
+    const fs = require("fs")
+    try {
+      const bundles = ((JSON.parse(fs.readFileSync(process.argv[1])).dsh || {}).profile || {}).bundles || []
+      process.exit(bundles.includes(process.argv[2]) ? 0 : 1)
+    } catch {
+      process.exit(1)
+    }
+  ' "$pkg" "$p" || {
+    echo "installing plugin: $p"
+    dsh plugin --profile web add "$p" < /dev/null
+  }
+done
 exec dsh web --no-open --host 0.0.0.0
