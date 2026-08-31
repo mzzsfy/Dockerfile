@@ -1,4 +1,4 @@
-FROM node:24-alpine
+FROM node:24-slim
 
 RUN npm i -g pnpm @deepseek-ai/dsh \
     && dsh plugin --profile web add dshmarket < /dev/null \
