@@ -8,7 +8,7 @@ default_age=$((60 * 6))
 orig=$(pnpm config get minimumReleaseAge --global)
 # 插件经 pnpm 安装,pnpm 11 默认发布冷静期会使插件版本滞后于 npm 安装的主程序,安装阶段取消
 pnpm config set minimumReleaseAge 0 --global || echo "warning: failed to clear minimumReleaseAge, plugin versions may lag behind dsh"
-for p in dshmarket dsh-web-startup-auth; do
+for p in dshmarket dsh-web-startup-auth @mzzsfy/dsh-auto-trust-all; do
   node -e '
     const fs = require("fs")
     try {
