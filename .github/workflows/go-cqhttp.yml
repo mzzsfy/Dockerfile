@@ -15,7 +15,23 @@ jobs:
         with:
           timezone: Asia/Shanghai
 
+      # 定时触发时检查上游是否有更新,未更新则跳过构建推送;本地文件改动需手动触发才会构建
+      - name: Check upstream
+        id: check
+        continue-on-error: true
+        env:
+          TRIGGER: ${{ github.event_name }}
+        run: |
+          hub_time() { curl -sf --max-time 30 "https://hub.docker.com/v2/repositories/$1/tags/$2" | jq -r '.tag_last_pushed // ""'; }
+          upstream_time=$(curl -sf --max-time 30 -H "Authorization: Bearer ${{ github.token }}" "https://api.github.com/repos/Mrs4s/go-cqhttp/commits" | jq -r '.[0].commit.committer.date // ""') || upstream_time=""
+          # 上游 Dockerfile 固定使用这两个基础镜像 tag
+          golang_time=$(hub_time library/golang 1.20-alpine) || golang_time=""
+          alpine_time=$(hub_time library/alpine latest) || alpine_time=""
+          ours_time=$(hub_time "${{ secrets.DOCKER_HUB_USERNAME }}/go-cqhttp" latest) || ours_time=""
+          ./.github/scripts/check-upstream.sh "$ours_time" "$upstream_time" "$golang_time" "$alpine_time"
+
       - name: ready
+        if: steps.check.outputs.skip != 'true'
         run: |
           rm -rf {*,.[^.]*,..?*}
           git clone --depth=1 https://github.com/Mrs4s/go-cqhttp.git .
@@ -28,6 +44,7 @@ jobs:
 
       # docker login
       - name: Login to Docker Hub
+        if: steps.check.outputs.skip != 'true'
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
@@ -35,11 +52,13 @@ jobs:
 
       # 设置 docker buildx 环境
       - name: Set up Docker Buildx
+        if: steps.check.outputs.skip != 'true'
         id: buildx
         uses: docker/setup-buildx-action@v2
 
       # build 前置操作
       - name: Docker before
+        if: steps.check.outputs.skip != 'true'
         id: docker_before
         run: |
           image="${{ secrets.DOCKER_HUB_USERNAME }}/go-cqhttp"
@@ -51,6 +70,7 @@ jobs:
 
       # build 并且 push docker 镜像
       - name: Build and push
+        if: steps.check.outputs.skip != 'true'
         id: docker_build
         uses: docker/build-push-action@v3
         with:
@@ -59,7 +79,8 @@ jobs:
           push: true
           tags: ${{steps.docker_before.outputs.tags}}
           platforms: linux/amd64,linux/arm64/v8
-      
+
       # 打印 docker 镜像 SHA256 Hash 值
       - name: Image digest
+        if: steps.check.outputs.skip != 'true'
         run: echo ${{ steps.docker_build.outputs.digest }}
