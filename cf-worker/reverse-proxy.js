@@ -21,7 +21,15 @@ export default {
         if (!env['upstream_url']){
             return new Response('环境变量upstream_url未设置,格式：https://xxxx.com')
         }
-        return fetch(new Request(env['upstream_url'] + pathname + search, {
+        let upstream;
+        try {
+            upstream = new URL(env['upstream_url']);
+        } catch (e) {
+            return new Response('环境变量upstream_url格式错误,格式：https://xxxx.com');
+        }
+        upstream.pathname = pathname;
+        upstream.search = search;
+        return fetch(new Request(upstream, {
             body: request.body,
             headers: request.headers,
             method: request.method,
