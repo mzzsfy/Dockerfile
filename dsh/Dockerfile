@@ -1,5 +1,11 @@
 FROM node:24-slim
 
+ENV TZ=Asia/Shanghai
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends tzdata \
+  && rm -rf /var/lib/apt/lists/*
+
 RUN npm i -g pnpm @deepseek-ai/dsh && npm cache clean -f
 
 VOLUME ["/root/.dsh"]
