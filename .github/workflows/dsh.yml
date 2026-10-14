@@ -8,12 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check Out
-        uses: actions/checkout@v3
-
-      - name: Setup timezone
-        uses: zcong1993/setup-timezone@master
-        with:
-          timezone: Asia/Shanghai
+        uses: actions/checkout@v7
 
       # 定时触发时检查上游是否有更新,未更新则跳过构建推送;本地文件改动需手动触发才会构建
       - name: Check upstream
@@ -33,7 +28,7 @@ jobs:
       # docker login
       - name: Login to Docker Hub
         if: steps.check.outputs.skip != 'true'
-        uses: docker/login-action@v2
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
@@ -42,13 +37,15 @@ jobs:
       - name: Set up Docker Buildx
         if: steps.check.outputs.skip != 'true'
         id: buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v4
 
       # build 前置操作
       - name: Docker before
         if: steps.check.outputs.skip != 'true'
         id: docker_before
         run: |
+          # 时区只影响 tag 名的时间戳
+          export TZ=Asia/Shanghai
           image="${{ secrets.DOCKER_HUB_USERNAME }}/dsh"
           tags="$image:$(date +'%y-%m-%d_%H-%M'),$image:latest"
           echo "target images $tags"
@@ -60,7 +57,7 @@ jobs:
       - name: Build and push
         if: steps.check.outputs.skip != 'true'
         id: docker_build
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v7
         with:
           context: ./dsh
           file: ./dsh/Dockerfile

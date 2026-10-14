@@ -1,4 +1,4 @@
-FROM node:alpine
+FROM node:24-alpine
 
 ADD ./docker-entrypoint.sh /
 RUN npm i onebots -g && npm cache clean -f

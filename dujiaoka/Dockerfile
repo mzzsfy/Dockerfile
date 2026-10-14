@@ -1,4 +1,4 @@
-FROM webhippie/php-nginx:7
+FROM webhippie/php-nginx:8.1
 ENV NGINX_WEBROOT=/app/public
 COPY . /app
 WORKDIR /app

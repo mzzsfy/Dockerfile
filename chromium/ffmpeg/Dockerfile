@@ -1,4 +1,4 @@
-FROM debian:bullseye
+FROM debian:trixie
 
 ENV LANG=C.UTF-8
 
