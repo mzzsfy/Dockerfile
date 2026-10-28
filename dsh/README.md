@@ -2,14 +2,20 @@
 
 DeepSeek Harness CLI 的 docker 镜像
 
-镜像内置 web profile 及 dshmarket、dsh-web-startup-auth、@mzzsfy/dsh-auto-trust-all 插件
+首次启动默认为 web profile 安装 dshmarket、dsh-web-startup-auth、@mzzsfy/dsh-auto-trust-all 插件
 
-```
-docker run -d --name dsh -p 3080:3080 -v dsh-data:/root/.dsh mzzsfy/dsh
+当前工作树新增的环境恢复功能尚未发布，以下在仓库根目录执行，使用本地构建镜像；公共 `mzzsfy/dsh` 标签是否包含这些能力取决于后续发布。Linux 容器验收尚待 CI 执行。
+
+```sh
+docker build -t dsh-local ./dsh
+docker run -d --name dsh -p 3080:3080 -v dsh-home:/root dsh-local
 ```
 
 - Web UI: `http://<宿主IP>:3080`
-- 会话与配置持久化在 /root/.dsh,项目请自行挂载
+- 整个 `/root` 持久化；重建复用同一个卷，一个卷只供一个活跃容器使用。主目录以外的项目需另外挂载
+- 普通 `apt` / `apt-get` 安装自动记录，重建后后台恢复；`docker exec dsh dsh-env status` 查看状态。服务可访问不等于所有软件已恢复
+- 原先挂载 `/root/.dsh` 的卷布局不能直接改挂 `/root`；更换部署前需自行备份并将数据放入新主目录的 `.dsh` 子目录
+- [软件环境、目录映射与启动钩子](environment-persistence.md)
 - 插件在首次启动时在线安装,容器需能访问 npm registry,离线环境不适用
 - 插件安装期间 pnpm 发布冷静期临时置 0,消除冷静期导致的插件版本滞后;安装完成后还原原有配置,未设置时写为 6h,约束运行期手动安装
 - @mzzsfy/dsh-auto-trust-all 动态信任所有到达的 Host 头,经域名、内网 IP、反向代理远程访问免改启动命令;仅放行可达性闸门,cookie 与 startup-auth 认证原样保留

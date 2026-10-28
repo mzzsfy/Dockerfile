@@ -53,6 +53,22 @@ jobs:
           # 一个特殊镜像,修复某些buildx 的 bug
           docker run --rm --privileged multiarch/qemu-user-static --reset -p yes > /dev/null 2>&1
 
+      - name: Build test image
+        if: steps.check.outputs.skip != 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: ./dsh
+          load: true
+          tags: dsh-persistence-test
+          platforms: linux/amd64
+
+      - name: Verify environment persistence
+        if: steps.check.outputs.skip != 'true'
+        timeout-minutes: 20
+        run: |
+          docker run --rm --entrypoint node -v "$PWD/dsh/tests:/tests:ro" -v "$PWD/dsh/environment.mjs:/environment.mjs:ro" dsh-persistence-test --test /tests/environment.test.mjs
+          sh dsh/tests/smoke.sh dsh-persistence-test
+
       # build 并且 push docker 镜像
       - name: Build and push
         if: steps.check.outputs.skip != 'true'

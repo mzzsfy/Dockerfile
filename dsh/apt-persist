@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /usr/local/bin/node /usr/local/lib/dsh-env/environment.mjs apt "$(basename "$0")" "$@"
