@@ -6,6 +6,14 @@ import { join } from 'node:path';
 
 const implementation = await import('../environment.mjs').catch(() => ({}));
 
+test('DSH 默认通配绑定，显式地址原样作为单一参数并使用镜像 Node', () => {
+  assert.equal(typeof implementation.dshServiceCommand, 'function');
+  const command = implementation.dshServiceCommand({});
+  assert.deepEqual(command, ['/usr/local/bin/node', '/usr/local/lib/node_modules/@deepseek-ai/dsh/lib/bin.js', 'web', '--no-open', '--host', '0.0.0.0']);
+  assert.equal(implementation.dshServiceCommand({ DSH_HOST: '::' }).at(-1), '::');
+  assert.equal(implementation.dshServiceCommand({ DSH_HOST: '' }).at(-1), '0.0.0.0');
+});
+
 test('映射创建后写入目标保存到源，重复执行不覆盖目标内容', () => {
   assert.equal(typeof implementation.applyMapping, 'function');
   const root = mkdtempSync(join(tmpdir(), 'dsh-map-'));

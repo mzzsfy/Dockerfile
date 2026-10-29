@@ -43,30 +43,31 @@ docker run --rm --entrypoint sh -v "$volume:/root" "$image" -ec '
   echo saved > /data/test1/file
 '
 
-# 使用真实发行目录验证白名单，测试镜像不预装工具链。
-docker create --name "$go_container" golang:1.24-bookworm >/dev/null
-docker cp "$go_container:/usr/local/go" "$fixtures/go"
-docker create --name "$java_container" eclipse-temurin:21-jdk-jammy >/dev/null
-docker cp "$java_container:/opt/java/openjdk" "$fixtures/jdk"
-docker run --rm --entrypoint sh -v "$volume:/root" -v "$fixtures:/fixtures:ro" "$image" -ec '
-  apt-get update
-  apt-get install -y --no-install-recommends ca-certificates libstdc++6 zlib1g
-  dsh-env install go /fixtures/go
-  dsh-env install jdk /fixtures/jdk
-'
+# 真实后端安装；重建时断网，验证直接复用安装结果。
 docker run --rm --entrypoint sh -v "$volume:/root" "$image" -ec '
-  dsh-env restore
-  dsh-env prepare
-  /usr/local/go/bin/go version
-  /opt/java/bin/java -version
+  dsh-env install go@1.24.3
+  dsh-env install java@21
+  dsh-env install python@3.13
+  dsh-env list
+  cp /root/.persist/toolchains/registry.json /root/registry-before.json
+'
+docker run --rm --network none --entrypoint sh -v "$volume:/root" "$image" -ec '
+  . /usr/local/bin/dsh-environment.sh
+  dsh-env maintain-tools
+  cmp /root/registry-before.json /root/.persist/toolchains/registry.json
+  go version
+  java -version
+  python --version
   printf "%s\n" "package main" "func main() {}" > /root/hello.go
-  /usr/local/go/bin/go run /root/hello.go
+  GOTOOLCHAIN=local go run /root/hello.go
   printf "%s\n" "class Hello { public static void main(String[] args) {} }" > /root/Hello.java
-  /opt/java/bin/javac /root/Hello.java
-  /opt/java/bin/java -cp /root Hello
+  javac /root/Hello.java
+  java -cp /root Hello
+  python -c "import ssl, sqlite3; print(ssl.OPENSSL_VERSION)"
+  dsh-env exec java -- sh -ec '\''test -x "$JAVA_HOME/bin/java"'\''
+  if dsh-env remove java@21; then exit 1; fi
+  dsh-env exec go -- sh -c '\''dsh-env remove go@1.24.3; test "$?" -eq 75'\''
   test "$(cat /data/test1/file)" = saved
-  dsh-env remove go
-  dsh-env remove jdk
 '
 
 # 直接运行监督器，隔离 npm 插件下载与环境恢复验收。
@@ -129,47 +130,31 @@ docker run --rm --entrypoint sh -v "$volume:/root" "$image" -ec '
   dsh-env reconcile
   node -e '\''const t=require("/root/.persist/manifests/apt.json");if(!t.includes("ripgrep:amd64")||t.includes("jq:amd64"))process.exit(1)'\''
 '
-# 挂起的工具探测不能阻塞监督器响应停止信号。
-docker run --rm --entrypoint sh -v "$volume:/root" "$image" -ec '
-  mkdir -p /root/.persist/tools/go/versions/hanging/bin
-  printf "%s\n" "#!/bin/sh" "trap '\'' '\'' TERM" "touch /root/probe-running" "while :; do sleep 1; done" > /root/.persist/tools/go/versions/hanging/bin/go
-  chmod +x /root/.persist/tools/go/versions/hanging/bin/go
-  ln -s /root/.persist/tools/go/versions/hanging /root/.persist/tools/go/current
-'
-docker run -d --name "$container" --entrypoint dsh-env -v "$volume:/root" "$image" start /bin/sh -c 'touch /root/should-not-start' >/dev/null
-tries=0
-until docker exec "$container" test -f /root/probe-running; do
-  tries=$((tries + 1))
-  test "$tries" -lt 60
-  sleep 1
-done
-docker stop -t 10 "$container" >/dev/null
-test "$(docker inspect -f '{{.State.ExitCode}}' "$container")" != 137
-docker rm "$container" >/dev/null
-
-# 第二轮工具探测被停止后，不得继续创建服务。
+# 故意挂起已登记工具：服务必须先创建，停止时不能遗留安装进程。
 docker run --rm --entrypoint sh -v "$volume:/root" "$image" -ec '
   printf "%s\n" "exit 0" > /root/.dsh/container/before-start.sh
-  rm -f /root/probe-running
-  printf "%s\n" "#!/bin/sh" "if [ ! -f /root/probe-once ]; then touch /root/probe-once; exit 0; fi" "trap '\'' '\'' TERM" "touch /root/probe-running" "while :; do sleep 1; done" > /root/.persist/tools/go/versions/hanging/bin/go
+  printf "%s\n" "[]" > /root/.persist/manifests/apt.json
+  mv /root/.local/share/mise/installs/go/1.24.3/bin/go /root/.local/share/mise/installs/go/1.24.3/bin/go.saved
+  printf "%s\n" "#!/bin/sh" "test -f /root/service-started || exit 9" "touch /root/probe-running" "trap '\'' '\'' TERM" "while :; do sleep 1; done" > /root/.local/share/mise/installs/go/1.24.3/bin/go
+  chmod +x /root/.local/share/mise/installs/go/1.24.3/bin/go
 '
-docker run -d --name "$container" --entrypoint dsh-env -v "$volume:/root" "$image" start /bin/sh -c 'touch /root/should-not-start; sleep 60' >/dev/null
+docker run -d --name "$container" --entrypoint dsh-env -v "$volume:/root" "$image" start /bin/sh -c 'touch /root/service-started; trap "exit 0" TERM; while :; do sleep 1; done' >/dev/null
 tries=0
 until docker exec "$container" test -f /root/probe-running; do
   tries=$((tries + 1))
   test "$tries" -lt 60
   sleep 1
 done
+docker exec "$container" test -f /root/service-started
 docker stop -t 10 "$container" >/dev/null
 test "$(docker inspect -f '{{.State.ExitCode}}' "$container")" != 137
 docker rm "$container" >/dev/null
-docker run --rm --entrypoint sh -v "$volume:/root" "$image" -ec 'test ! -e /root/should-not-start'
 
-# 不可运行的白名单即使apt为空也不能报告ready。
-docker run --rm --entrypoint sh -v "$volume:/root" "$image" -ec '
-  printf "%s\n" "#!/bin/sh" "exit 1" > /root/.persist/tools/go/versions/hanging/bin/go
-  printf "%s\n" "[]" > /root/.persist/manifests/apt.json
-  if dsh-env restore; then exit 1; fi
-  node -e '\''if(require("/root/.persist/restore/status.json").phase !== "failed")process.exit(1)'\''
+# 损坏工具报告失败，但不阻止其他工具执行。
+docker run --rm --network none --entrypoint sh -v "$volume:/root" "$image" -ec '
+  printf "%s\n" "#!/bin/sh" "exit 1" > /root/.local/share/mise/installs/go/1.24.3/bin/go
+  if dsh-env maintain-tools; then exit 1; fi
+  node -e '\''if(require("/root/.persist/restore/tools.json").phase !== "failed")process.exit(1)'\''
+  dsh-env exec java -- java -version
 '
 echo 'environment smoke tests passed'

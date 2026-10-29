@@ -9,6 +9,8 @@ const STORE = '/root/.persist';
 const CONFIG = '/root/.dsh/container';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PACKAGE = /^[a-z0-9][a-z0-9+.-]*(?::[a-z0-9][a-z0-9-]*)?$/;
+const SYSTEM_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+const aptEnv = () => ({ ...process.env, PATH: SYSTEM_PATH });
 const within = (parent, child) => child === parent || child.startsWith(`${parent}/`);
 
 export function mergeTargets(targets, baseline, before, after, cancelled) {
@@ -51,14 +53,21 @@ let shutdownTimer;
 function shutdown(signal = 'SIGTERM') {
   stopping = true;
   stopChildren(signal);
-  if (!shutdownTimer) shutdownTimer = setTimeout(() => {
+  if (process.env.DSH_ENV_GROUP === '1') {
+    // 内层先清理自己建立的独立组，转发层不抢先杀死负责清理的子监督器。
+    for (const pid of groups) {
+      try { process.kill(-pid, 'SIGKILL'); }
+      catch (error) { if (error.code !== 'ESRCH') console.error(error.message); }
+    }
+  } else if (!shutdownTimer) shutdownTimer = setTimeout(() => {
     stopChildren('SIGKILL');
   }, 5 * 1000);
 }
 
 function launch(command, args, options = {}) {
-  const ownsGroup = process.platform !== 'win32' && process.env.DSH_ENV_GROUP !== '1';
-  const child = spawn(command, args, { stdio: 'inherit', ...options, detached: ownsGroup, env: { ...(options.env || process.env), DSH_ENV_GROUP: '1' } });
+  const { ownGroup = false, ...spawnOptions } = options;
+  const ownsGroup = process.platform !== 'win32' && process.env.DSH_MANAGED_GROUP !== '1' && (ownGroup || process.env.DSH_ENV_GROUP !== '1');
+  const child = spawn(command, args, { stdio: 'inherit', ...spawnOptions, detached: ownsGroup, env: { ...(options.env || process.env), DSH_ENV_GROUP: '1' } });
   child.ownsGroup = ownsGroup;
   if (ownsGroup && child.pid) groups.add(child.pid);
   children.add(child);
@@ -67,6 +76,31 @@ function launch(command, args, options = {}) {
     child.once('exit', (code, signal) => { children.delete(child); resolve(code ?? (signal ? 128 + (os.constants.signals[signal] || 1) : 1)); });
   });
   return { child, done };
+}
+
+export async function runManagedCommand(command, args, options = {}) {
+  if (stopping) return { code: 1, stdout: '' };
+  const { capture = false, timeoutMs = 0, ...spawnOptions } = options;
+  const task = launch(command, args, { ...spawnOptions, ownGroup: true, env: { ...(spawnOptions.env || process.env), DSH_MANAGED_GROUP: '1' }, stdio: capture ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
+  const closed = new Promise(resolve => task.child.once('close', resolve));
+  let stdout = '';
+  let overflow = false;
+  const kill = () => {
+    try { task.child.ownsGroup ? process.kill(-task.child.pid, 'SIGKILL') : task.child.kill('SIGKILL'); }
+    catch (error) { if (error.code !== 'ESRCH') console.error(error.message); }
+  };
+  if (capture) task.child.stdout.on('data', chunk => {
+    if (stdout.length + chunk.length > 4 * 1024 * 1024) { overflow = true; kill(); }
+    else stdout += chunk.toString();
+  });
+  const timer = timeoutMs ? setTimeout(kill, timeoutMs) : null;
+  try {
+    const code = await task.done;
+    kill();
+    await closed;
+    if (task.child.ownsGroup) groups.delete(task.child.pid);
+    return { code: overflow ? 1 : code, stdout };
+  } finally { if (timer) clearTimeout(timer); }
 }
 
 function stopChildren(signal = 'SIGTERM') {
@@ -202,13 +236,13 @@ function noMutation(args) {
 async function aptTransaction(binary, args) {
   if (!['apt', 'apt-get'].includes(binary)) throw new Error('invalid apt entry');
   initialize();
-  if (noMutation(args)) return launch(`/usr/bin/${binary}`, args).done;
+  if (noMutation(args)) return launch(`/usr/bin/${binary}`, args, { env: aptEnv() }).done;
   if (stat(journal)) throw new Error('上次 apt 操作未完成记录；先执行 dsh-env reconcile，再重试');
   const before = snapshot();
   const desired = targets();
   const cancelled = removalIntent(args);
   atomicJson(journal, { container: containerId(), before, targets: desired, cancelled, args, createdAt: new Date().toISOString() });
-  const code = await launch(`/usr/bin/${binary}`, [...aptOptions, ...args]).done;
+  const code = await launch(`/usr/bin/${binary}`, [...aptOptions, ...args], { env: aptEnv() }).done;
   const after = snapshot();
   const baseline = readJson(`${HERE}/baseline.json`, []);
   atomicJson(manifest, mergeTargets(desired, baseline, before, after, code === 0 ? cancelled : []));
@@ -226,7 +260,7 @@ async function restoreOne(name) {
   if (stat(journal)) throw new Error('存在未完成的用户 apt 事务，暂停恢复；执行 dsh-env reconcile 确认当前状态');
   if (!targets().includes(name)) return 0;
   if (snapshot().installed.includes(name)) return 0;
-  const env = { ...process.env, DEBIAN_FRONTEND: 'noninteractive' };
+  const env = { ...aptEnv(), DEBIAN_FRONTEND: 'noninteractive' };
   const repair = await launch('/usr/bin/dpkg', ['--configure', '-a'], { env }).done;
   if (repair !== 0 || stopping) return repair || 1;
   return launch('/usr/bin/apt-get', [...aptOptions, '-y', '--no-remove', 'install', name], { env }).done;
@@ -253,13 +287,8 @@ async function restore() {
   desired = targets();
   const actual = snapshot().installed;
   const pending = desired.filter(name => !actual.includes(name));
-  const toolFailures = [];
-  for (const name of Object.keys(toolRules)) {
-    try { await restoreTool(name); } catch (error) { toolFailures.push(`${name}: ${error.message}`); }
-  }
-  atomicJson(`${STORE}/restore/tools.json`, { failures: toolFailures });
-  state({ phase: pending.length || toolFailures.length ? 'failed' : 'ready', pending, toolFailures, failed: failed.filter(name => desired.includes(name)) });
-  return pending.length || toolFailures.length ? 1 : 0;
+  state({ phase: pending.length ? 'failed' : 'ready', pending, failed: failed.filter(name => desired.includes(name)) });
+  return pending.length ? 1 : 0;
 }
 
 export function reconcileTargets(desired, baseline, pending, actual, container) {
@@ -274,12 +303,14 @@ function containerId() {
 }
 
 async function toolDependencies() {
-  if (!stat(`${STORE}/tools/jdk/current`)) return 0;
+  const registry = readJson(`${STORE}/toolchains/registry.json`, { tools: {} });
+  if (!Object.keys(registry.tools || {}).length) return 0;
+  if (stat(journal)) throw new Error('apt 事务未完成，暂不补工具依赖');
   const required = ['ca-certificates', 'libc6', 'libgcc-s1', 'libstdc++6', 'zlib1g'];
   const installed = new Set(snapshot().installed.map(name => name.split(':')[0]));
   const missing = required.filter(name => !installed.has(name));
   if (!missing.length) return 0;
-  const env = { ...process.env, DEBIAN_FRONTEND: 'noninteractive' };
+  const env = { ...aptEnv(), DEBIAN_FRONTEND: 'noninteractive' };
   await launch('/usr/bin/apt-get', [...aptOptions, 'update'], { env }).done;
   if (stopping) return 1;
   return launch('/usr/bin/apt-get', [...aptOptions, '-y', '--no-remove', 'install', ...missing], { env }).done;
@@ -296,116 +327,67 @@ function reconcile() {
   console.log('[environment] 已按当前安装状态及中断前卸载意图核对清单，下次启动重试恢复');
 }
 
-const toolRules = {
-  go: { target: '/usr/local/go', executable: 'bin/go', args: ['version'], env: {} },
-  jdk: { target: '/opt/java', executable: 'bin/java', args: ['-version'], env: { JAVA_HOME: '/opt/java' } },
-};
-function toolMapping(name) { return { source: `${STORE}/tools/${name}/current`, target: toolRules[name].target }; }
-async function probe(command, args) {
-  if (stopping) return 1;
-  const task = launch(command, args);
-  const timer = setTimeout(() => {
-    try { task.child.ownsGroup ? process.kill(-task.child.pid, 'SIGKILL') : task.child.kill('SIGKILL'); }
-    catch (error) { if (error.code !== 'ESRCH') console.error(error.message); }
-  }, 30 * 1000);
-  try { return await task.done; } finally { clearTimeout(timer); }
+async function tools() {
+  const { createToolchains } = await import('./toolchains.mjs');
+  return createToolchains({ run: runManagedCommand });
 }
 
-async function restoreTool(name) {
-  const rule = toolRules[name];
-  const { source, target } = toolMapping(name);
-  if (!stat(source)) return;
-  const destination = fs.realpathSync(source);
-  if (!within(`${STORE}/tools/${name}/versions`, destination)) throw new Error(`工具链接越界: ${source}`);
-  plainParents(target);
-  if (stat(target)) {
-    if (!stat(target).isSymbolicLink() || fs.readlinkSync(target) !== source) throw new Error(`工具入口冲突: ${target}`);
-  } else {
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.symlinkSync(source, target);
-  }
-  Object.assign(process.env, rule.env);
-  if (!process.env.PATH.split(':').includes(`${target}/bin`)) process.env.PATH = `${process.env.PATH}:${target}/bin`;
-  const code = await probe(`${target}/${rule.executable}`, rule.args);
-  if (code !== 0) throw new Error(`${name} 无法运行，检查发行架构和系统依赖`);
+async function toolsLocked(args) {
+  initialize();
+  return launch('/usr/bin/flock', ['--exclusive', '--no-fork', `${STORE}/manifests/tools.lock`, process.execPath, fileURLToPath(import.meta.url), 'tools-locked', ...args]).done;
 }
 
-function validateToolTree(directory) {
-  const realRoot = fs.realpathSync(directory);
-  function walk(dir) {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const file = path.join(dir, entry.name);
-      if (entry.isSymbolicLink()) {
-        const link = fs.readlinkSync(file);
-        if (path.isAbsolute(link) || !within(realRoot, fs.realpathSync(file))) throw new Error(`工具含外部链接: ${file}`);
-      } else if (entry.isDirectory()) walk(file);
-      else if (!entry.isFile()) throw new Error(`工具含特殊文件: ${file}`);
+async function toolAction(args) {
+  const [action, ...rest] = args;
+  const manager = await tools();
+  if (action === 'restore') {
+    atomicJson(`${STORE}/restore/tools.json`, { phase: 'restoring' });
+    try {
+      const result = await manager.restore();
+      atomicJson(`${STORE}/restore/tools.json`, { ...result, phase: result.failures.length ? 'failed' : 'ready' });
+      return result.failures.length ? 1 : 0;
+    } catch (error) {
+      atomicJson(`${STORE}/restore/tools.json`, { phase: 'failed', failures: [error.message] });
+      return 1;
     }
   }
-  walk(realRoot);
+  if (!['install', 'upgrade', 'use', 'remove'].includes(action) || rest.length > 1 || (action !== 'upgrade' && rest.length !== 1)) throw new Error('工具命令只接受一个 TOOL[@VERSION]，旧 DIRECTORY 导入接口已移除');
+  const result = await manager[action](rest[0]);
+  console.log(JSON.stringify(result, null, 2));
+  return 0;
 }
-async function installTool(name, directory) {
-  const rule = toolRules[name];
-  if (!rule || !directory) throw new Error('用法: dsh-env install go|jdk 已解包的发行目录');
-  const sourceDirectory = fs.realpathSync(directory);
-  if (within(STORE, sourceDirectory)) throw new Error('安装来源不能位于内部持久化目录');
-  validateToolTree(sourceDirectory);
-  const root = `${STORE}/tools/${name}`;
-  fs.mkdirSync(`${root}/versions`, { recursive: true });
-  const version = fs.mkdtempSync(`${root}/versions/install-`);
-  fs.cpSync(sourceDirectory, version, { recursive: true, verbatimSymlinks: true });
-  const code = await probe(`${version}/${rule.executable}`, rule.args);
-  if (code !== 0) throw new Error(`发行目录验证失败，保留当前版本；检查 ${version}`);
-  const { source, target } = toolMapping(name);
-  plainParents(target);
-  if (stat(target) && (!stat(target).isSymbolicLink() || fs.readlinkSync(target) !== source)) throw new Error(`工具入口冲突，未覆盖: ${target}`);
-  const next = `${root}/next-${process.pid}`;
-  fs.symlinkSync(version, next);
-  fs.renameSync(next, source);
-  await restoreTool(name);
-  console.log(`[environment] 已保存 ${name}；旧版本保留在 ${root}/versions`);
-}
-function removeTool(name) {
-  if (!toolRules[name]) throw new Error('用法: dsh-env remove go|jdk');
-  const { source, target } = toolMapping(name);
-  if (stat(target)?.isSymbolicLink() && fs.readlinkSync(target) === source) fs.unlinkSync(target);
-  if (stat(source)?.isSymbolicLink()) fs.unlinkSync(source);
-  console.log('[environment] 已取消工具入口，版本文件保留');
+
+async function maintainTools() {
+  atomicJson(`${STORE}/restore/tools.json`, { phase: 'restoring' });
+  const dependencies = await locked(['tool-dependencies']);
+  if (dependencies !== 0) console.error('[environment] 工具基础依赖恢复失败，继续检查已有工具');
+  if (stopping) return 1;
+  return toolsLocked(['restore']);
 }
 
 async function prepare() {
   initialize();
   const file = `${CONFIG}/paths.txt`;
   const mappings = parseMappings(stat(file) ? fs.readFileSync(file, 'utf8') : '');
-  for (const mapping of mappings) {
-    if (Object.entries(toolRules).some(([name, rule]) => stat(toolMapping(name).source) && (within(rule.target, mapping.target) || within(mapping.target, rule.target)))) throw new Error(`目标与已安装白名单工具冲突: ${mapping.target}`);
-    applyMapping(mapping);
-  }
-  const failures = [];
-  for (const name of Object.keys(toolRules)) {
-    try { await restoreTool(name); } catch (error) { failures.push(`${name}: ${error.message}`); console.error(error.message); }
-  }
-  atomicJson(`${STORE}/restore/tools.json`, { failures });
+  for (const mapping of mappings) applyMapping(mapping);
+  atomicJson(`${STORE}/restore/tools.json`, { phase: 'pending' });
 }
 
-async function supervise(command) {
+export function dshServiceCommand(env = process.env) {
+  return ['/usr/local/bin/node', '/usr/local/lib/node_modules/@deepseek-ai/dsh/lib/bin.js', 'web', '--no-open', '--host', env.DSH_HOST || '0.0.0.0'];
+}
+
+async function supervise(command, preparePlugins = false) {
   await prepare();
   if (stopping) return 1;
   state({ phase: 'starting' });
   atomicJson(`${STORE}/restore/after-hook.json`, { phase: 'pending' });
   if (await runHook(`${CONFIG}/before-start.sh`) !== 0) throw new Error('前置脚本失败，停止启动');
   if (stopping) return 1;
-  if (command[0] === '/usr/local/bin/dsh-start.sh') {
-    if (await launch('/bin/sh', [command[0], '--prepare']).done !== 0) throw new Error('DSH 插件准备失败');
+  if (preparePlugins) {
+    if (await launch('/bin/sh', ['/usr/local/bin/docker-entrypoint.sh', '--prepare']).done !== 0) throw new Error('DSH 插件准备失败');
     if (stopping) return 1;
   }
-  const dependencyCode = await locked(['tool-dependencies']);
-  if (dependencyCode !== 0) console.error('[environment] 白名单依赖恢复失败，服务以降级状态启动');
-  if (stopping) return 1;
-  for (const name of Object.keys(toolRules)) {
-    try { await restoreTool(name); } catch (error) { console.error(error.message); }
-  }
-  if (stopping) return 1;
   const service = launch(command[0], command.slice(1));
   const spawned = await new Promise(resolve => {
     service.child.once('spawn', () => resolve(true));
@@ -413,6 +395,7 @@ async function supervise(command) {
   });
   if (!spawned) throw new Error('服务进程创建失败');
   const worker = launch(process.execPath, [fileURLToPath(import.meta.url), 'restore']);
+  const toolWorker = launch(process.execPath, [fileURLToPath(import.meta.url), 'maintain-tools']);
   const after = runHook(`${CONFIG}/after-start.sh`).catch(error => {
     console.error(`[environment] 后置脚本失败: ${error.message}`);
     return 1;
@@ -422,7 +405,7 @@ async function supervise(command) {
   });
   const code = await service.done;
   shutdown();
-  await Promise.all([worker.done, after]);
+  await Promise.all([worker.done, toolWorker.done, after]);
   return code;
 }
 
@@ -432,20 +415,43 @@ async function main(args) {
     case 'baseline': atomicJson(`${HERE}/baseline.json`, snapshot().installed); return 0;
     case 'apt': return locked(['apt-locked', ...rest]);
     case 'apt-locked': return aptTransaction(rest[0], rest.slice(1));
-    case 'apt-update': return launch('/usr/bin/apt-get', [...aptOptions, 'update']).done;
+    case 'apt-update': return launch('/usr/bin/apt-get', [...aptOptions, 'update'], { env: aptEnv() }).done;
     case 'restore-one': return restoreOne(rest[0]);
     case 'tool-dependencies': return toolDependencies();
     case 'restore': return restore();
     case 'prepare': await prepare(); return 0;
+    case 'start-dsh': return supervise(dshServiceCommand(), true);
     case 'start': if (!rest.length) throw new Error('缺少服务命令'); return supervise(rest);
-    case 'install': return locked(['install-locked', ...rest]);
-    case 'install-locked': await installTool(rest[0], rest[1]); return 0;
-    case 'remove': return locked(['remove-locked', ...rest]);
-    case 'remove-locked': removeTool(rest[0]); return 0;
+    case 'install': case 'upgrade': case 'use': return toolsLocked([command, ...rest]);
+    case 'remove': {
+      initialize();
+      const code = await launch('/usr/bin/flock', ['--exclusive', '--nonblock', '--conflict-exit-code', '75', '--no-fork', `${STORE}/manifests/tool-usage.lock`, process.execPath, fileURLToPath(import.meta.url), 'remove-unused', ...rest]).done;
+      if (code === 75) console.error('[environment] 工具任务正在运行，暂不能卸载；任务结束后重试');
+      return code;
+    }
+    case 'remove-unused': return toolsLocked(['remove', ...rest]);
+    case 'tools-locked': return toolAction(rest);
+    case 'maintain-tools': return maintainTools();
+    case 'list': if (rest.length) throw new Error('用法: dsh-env list'); console.log(JSON.stringify(await (await tools()).list(), null, 2)); return 0;
+    case 'exec': case 'proxy': {
+      initialize();
+      return launch('/usr/bin/flock', ['--shared', '--no-fork', `${STORE}/manifests/tool-usage.lock`, process.execPath, fileURLToPath(import.meta.url), `${command}-locked`, ...rest]).done;
+    }
+    case 'exec-locked': {
+      if (rest.length < 3 || rest[1] !== '--') throw new Error('用法: dsh-env exec TOOL[@VERSION] -- COMMAND [ARGS...]');
+      const task = await (await tools()).execution(rest[0], rest[2], rest.slice(3));
+      return (await runManagedCommand(task.command, task.args, { env: task.env })).code;
+    }
+    case 'proxy-locked': {
+      if (!rest.length) throw new Error('缺少工具命令');
+      const task = await (await tools()).proxy(rest[0], rest.slice(1));
+      return (await runManagedCommand(task.command, task.args, { env: task.env })).code;
+    }
     case 'reconcile': return locked(['reconcile-locked']);
     case 'reconcile-locked': reconcile(); return 0;
     case 'status': console.log(JSON.stringify({ apt: readJson(`${STORE}/restore/status.json`, null), tools: readJson(`${STORE}/restore/tools.json`, null), afterHook: readJson(`${STORE}/restore/after-hook.json`, null), interrupted: readJson(journal, null) }, null, 2)); return 0;
-    default: throw new Error('用法: dsh-env status | install go|jdk DIRECTORY | remove go|jdk | reconcile');
+    case '--help': case 'help': console.log('dsh-env install TOOL[@VERSION] | upgrade [TOOL] | use TOOL@VERSION | remove TOOL@VERSION | list | exec TOOL[@VERSION] -- COMMAND [ARGS...] | status | reconcile\n白名单: go、java (jdk)、python；重建不自动升级；use不下载；remove拒绝当前默认版本。'); return 0;
+    default: throw new Error('未知命令，执行 dsh-env --help 查看用法');
   }
 }
 

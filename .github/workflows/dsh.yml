@@ -21,7 +21,7 @@ jobs:
           npm_time() { curl -sf --max-time 30 "https://registry.npmjs.org/$1" | jq -r '."dist-tags".latest as $v | .time[$v] // ""'; }
           dsh_time=$(npm_time "@deepseek-ai%2Fdsh") || dsh_time=""
           pnpm_time=$(npm_time "pnpm") || pnpm_time=""
-          node_time=$(hub_time library/node 24-slim) || node_time=""
+          node_time=$(hub_time library/node 24-bookworm-slim) || node_time=""
           ours_time=$(hub_time "${{ secrets.DOCKER_HUB_USERNAME }}/dsh" latest) || ours_time=""
           ./.github/scripts/check-upstream.sh "$ours_time" "$dsh_time" "$pnpm_time" "$node_time"
 
@@ -64,9 +64,9 @@ jobs:
 
       - name: Verify environment persistence
         if: steps.check.outputs.skip != 'true'
-        timeout-minutes: 20
+        timeout-minutes: 40
         run: |
-          docker run --rm --entrypoint node -v "$PWD/dsh/tests:/tests:ro" -v "$PWD/dsh/environment.mjs:/environment.mjs:ro" dsh-persistence-test --test /tests/environment.test.mjs
+          docker run --rm --entrypoint sh -v "$PWD/dsh:/source:ro" dsh-persistence-test -c 'node --test /source/tests/*.test.mjs'
           sh dsh/tests/smoke.sh dsh-persistence-test
 
       # build 并且 push docker 镜像

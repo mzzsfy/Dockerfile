@@ -46,25 +46,79 @@ apt-get remove -y ripgrep
 
 正常使用 PATH 中的 `apt`、`apt-get` 即可。直接调用 `/usr/bin/apt`、`/usr/bin/apt-get`、`dpkg` 或 `apt-mark` 会绕过记录入口，不保证保存安装意图。恢复按包名进行，不锁定旧版本；缓存减少下载，但不保证离线恢复。
 
-Go/JDK 若要直接保留工具目录，先下载并解包适合当前 Linux 架构的发行包，再执行：
+## 工具链安装、升级和多版本
+
+镜像内置 mise 作为安装后端，用户统一通过 `dsh-env` 操作，无需手动下载或解压。首批白名单为 Go、Temurin Java、Python；`jdk` 是 `java` 的别名。
 
 ```sh
-# 参数为已经解包的发行目录，不是压缩包
-# Go 目录应包含 bin/go，JDK 目录应包含 bin/java
-dsh-env install go /tmp/go
-dsh-env install jdk /tmp/jdk-21
+dsh-env install go
+dsh-env install java@21
+dsh-env install python@3.13
+dsh-env list
 ```
 
-升级时对新发行目录再次执行 `install`。需要卸载时再执行以下命令；它们取消当前入口，历史版本文件仍保留在持久卷内：
+- Go、Python 不指定版本时解析最新稳定版，保存实际版本和 major.minor 升级范围；Java 默认使用 Temurin 21 系列。
+- 指定一至两段版本作为范围，三段及以上作为固定补丁版本；Java 支持 `temurin-21.0.9+11` 形式的构建号。
+- 下载、安装和基础运行检查成功后才切换默认。失败保留原默认选择，磁盘上可能留下未登记的安装文件。
+- 工具安装结果保存在 `/root/.local/share/mise`，管理记录保存在 `/root/.persist/toolchains`，缓存位于 `/root/.cache/mise`。重建复用卷后直接使用，默认不升级；后台仅对缺失的当前默认版本尝试精确恢复。
 
 ```sh
-dsh-env remove go
-dsh-env remove jdk
+# 在当前请求范围内升级；无参数时逐个升级已管理工具
+dsh-env upgrade java
+dsh-env upgrade
+
+# 安装另一系列并设为默认；原版本保留
+dsh-env install java@25
+
+# 切换回已安装的 21 系列，不下载；多个匹配版本选择最高版本
+dsh-env use java@21
+
+# 删除非当前默认版本；实际卸载成功后移除记录
+dsh-env remove java@25
 ```
 
-Go 入口为 `/usr/local/go`，JDK 入口为 `/opt/java`；DSH 启动环境包含相应 bin 路径，已注册 JDK 时设置 JAVA_HOME。运行中首次注册 JDK 后，需要 JAVA_HOME 的任务应重启容器或在当前终端显式设置。`docker exec` 新终端不继承入口脚本修改的环境，必要时使用 `/usr/local/go/bin/go`、`/opt/java/bin/java` 等完整路径。
+`remove` 拒绝删除当前默认版本，需先切换其他已安装版本；本版没有清空某工具全部版本的命令。升级不会自动清理旧版本，项目兼容性仍需用户验证。并发切换使用同一份版本记录构建命令与环境；通过包装器运行的任务持有使用锁，卸载遇到运行中的任务会立即拒绝，任务结束后可重试。用户直接执行安装目录内的二进制不受该锁保护。
 
-这两个专用入口不会捕获任意 `tar` 或 `curl | sh` 安装。来源需满足工具运行依赖；目标已有普通目录时拒绝覆盖。工具升级保留旧版本，磁盘空间由用户按需清理。
+## 环境设置与自定义启动脚本
+
+环境设置与启动分开：
+
+- `/usr/local/bin/dsh-environment.sh`：用 `.` 加载，只配置 PATH，保留原路径，重复加载不重复添加；不启动服务，也不执行安装。
+- `/usr/local/bin/docker-entrypoint.sh`：唯一启动脚本，加载环境后交给监督器；插件准备保留在它的内部准备分支中，监督器随后直接启动 DSH，不再经过第三个 Shell 启动脚本。
+
+用户自定义脚本示例：
+
+```sh
+#!/bin/sh
+set -eu
+. /usr/local/bin/dsh-environment.sh
+go version
+```
+
+若自行替换容器入口，希望最后仍启动 DSH，可在自定义准备完成后执行：
+
+```sh
+exec /usr/local/bin/docker-entrypoint.sh
+```
+
+`docker exec` 新进程不继承入口脚本修改的环境，应主动加载：
+
+```sh
+docker exec dsh sh -c '. /usr/local/bin/dsh-environment.sh; go version'
+```
+
+需要一次命令使用指定工具版本及完整环境时：
+
+```sh
+dsh-env exec java@21 -- ./gradlew build
+dsh-env exec python@3.13 -- python --version
+```
+
+这些命令要求版本已经登记且文件可用，不隐式安装。Java 代理和 `exec` 会为子进程设置对应 JAVA_HOME，环境脚本不会把父 shell 的 JAVA_HOME 写死到某个版本。运行中的进程不会因为切换版本自动重启。
+
+已管理的命令优先使用选定工具；其版本缺失时明确失败，不悄悄改用 apt 版本。未管理的命令回退到原 PATH 中的系统安装。apt 安装的 Java、Go、Python 仍归 apt 管理；显式 `/usr/bin/java` 等系统入口不受工具链选择影响。不要用裸 mise 修改包装器管理的安装，项目 mise 配置不会被包装器自动加载。
+
+旧 `dsh-env install go|jdk DIRECTORY` 接口已移除。旧 `/root/.persist/tools` 数据保留，不自动转换、删除或恢复旧专用入口；请用新命令安装所需版本，确认项目可用后再自行整理旧数据。
 
 ## 自定义软件目录
 
@@ -124,7 +178,7 @@ docker exec dsh dsh-env status
 docker logs dsh
 ```
 
-DSH 可在后台 apt 完成前启动。状态中的 `ready` 仅表示记录的软件恢复目标和白名单运行检查通过，后置钩子结果单独显示，不代表任意项目都可运行。
+DSH 可在后台 apt 完成前启动。状态分为 `apt`、`tools`、`afterHook`：`apt`、`tools` 的 `ready` 表示该项恢复或检查通过，`afterHook` 的 `complete` 表示后置脚本成功，不代表任意项目都可运行。DSH 服务创建后才开始工具检查、依赖恢复和 apt 维护；一个工具失败不会退出服务。
 
 若提示有未完成的用户 apt 事务，先检查日志与系统实际状态，再在容器内处理：
 
@@ -144,10 +198,8 @@ dsh-env reconcile
 - 插件在首次启动时在线安装,容器需能访问 npm registry,离线环境不适用
 - 插件安装期间 pnpm 发布冷静期临时置 0,消除冷静期导致的插件版本滞后;安装完成后还原原有配置,未设置时写为 6h,约束运行期手动安装
 - @mzzsfy/dsh-auto-trust-all 动态信任所有到达的 Host 头,经域名、内网 IP、反向代理远程访问免改启动命令;仅放行可达性闸门,cookie 与 startup-auth 认证原样保留
-- **启动命令按 dsh 版本自动选择**(入口脚本运行时判断,两代绑定面不兼容):
-  - **0.2.0 线**:不传 `--host`,非回环绑定由旧版插件(<=0.3.x)的 bundle patch 翻转缺省值为 `0.0.0.0`——该线 CLI 拒 `--host 0.0.0.0` 且 schema 只收 `127.0.0.1`/`0.0.0.0`;`DSH_HOST` 仅支持 `127.0.0.1`
-  - **0.2.1+ 线**:宿主拒通配绑定,插件不再碰绑定;`DSH_HOST` 显式指定优先,缺省取容器首个非内部 IPv4(`-p` 发布端口可达),无非内部地址回落 `127.0.0.1`
-  - 注意耦合:0.2.0 宿主 + 插件升级到适配版(0.4 起)后不再翻转绑定,`-p` 将不可达——升级插件请配合重建镜像使用 0.2.1 线宿主
-- 每个新入口(各域名/各 IP 形态)首访需各自铸一次会话 cookie:取启动日志 `token=` 拼 `http://<入口>/?token=<T>` 打开一次
+- **默认绑定 `0.0.0.0`**，启动参数为 `web --no-open --host "${DSH_HOST:-0.0.0.0}"`；可通过 Docker `-e DSH_HOST=具体地址` 覆盖。前提是已安装并加载支持通配绑定、且与宿主版本兼容的 `dsh-web-startup-auth`。不再探测容器网卡或按宿主版本切换命令。
+- 持久卷中的已有插件不会自动升级。如果旧插件不支持此绑定，先在容器内执行 `dsh plugin --profile web add dsh-web-startup-auth@latest`，再重启；单纯更新镜像不会替换卷里的旧插件。[上游使用说明](https://github.com/GDWhisper/dsh-web-startup-auth#readme)
+- 支持认证桥接的 startup-auth 会为通过认证的请求补发上游 cookie，无需手动使用 token URL。远程访问首次设置管理员账号，之后登录；本机免登录要求 TCP 对端和 Host 都满足插件的回环判定，并且未启用本机登录校验。Docker 端口转发不保证被识别为回环请求。
 - 时区默认 Asia/Shanghai,经 TZ 环境变量控制,运行时 `-e TZ=America/New_York` 覆盖为任意 IANA 时区
 - API Key 等凭证在 Web UI 内配置
