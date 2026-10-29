@@ -53,6 +53,7 @@ docker run --rm --entrypoint sh -v "$volume:/root" "$image" -ec '
 '
 docker run --rm --network none --entrypoint sh -v "$volume:/root" "$image" -ec '
   . /usr/local/bin/dsh-environment.sh
+  dsh-env prepare
   dsh-env maintain-tools
   cmp /root/registry-before.json /root/.persist/toolchains/registry.json
   go version
