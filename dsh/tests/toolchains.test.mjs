@@ -238,6 +238,23 @@ test('Given mise Java 真实 build 版本 When 安装、切换、删除 Then 保
   for (const invalid of ['java@21+1', 'java@21.0.9+../1', 'java@21.0.9+1+2']) await assert.rejects(f.api.install(invalid));
 });
 
+test('CI Temurin 点分构建号和 LTS 后缀支持安装、排序、精确恢复', async t => {
+  const f = await fixture(t);
+  f.latest.set('java@temurin-21', 'temurin-21.0.13+9.0.LTS');
+  await f.api.install('java@21');
+  await f.api.install('java@21.0.13+10.0.LTS');
+  await f.api.install('java@21.0.13+9.1.LTS');
+  await f.api.use('java@21');
+  assert.equal(JSON.parse(await f.registry()).tools.java.current, 'temurin-21.0.13+10.0.LTS');
+  assert.equal((await f.api.list()).length, 3);
+  await fs.rm(f.installPath('java@temurin-21.0.13+10.0.LTS'), { recursive: true });
+  f.calls.length = 0;
+  assert.equal((await f.api.restore()).failures.length, 0);
+  assert.deepEqual(f.calls.filter(c => c.args[0] === 'install').map(c => c.args[1]), ['java@temurin-21.0.13+10.0.LTS']);
+  assert.ok(!f.calls.some(c => c.args[0] === 'latest'));
+  for (const invalid of ['java@21.0.13+9.0.LTS/../x', 'java@21.0.13+9..0', 'java@21.0.13+9.0;id', 'go@1.24.3+9.0.LTS']) await assert.rejects(f.api.install(invalid));
+});
+
 test('Given 范围安装的版本 When 显式精确 upgrade Then 不升级不访问 backend', async t => {
   const f = await fixture(t);
   await f.api.install('go');

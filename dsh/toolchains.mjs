@@ -13,7 +13,7 @@ const INSTALL_TIMEOUT = 30 * 60 * 1000;
 const PROBE_TIMEOUT = 10 * 1000;
 const numeric = /^(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*))*$/;
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
-const numbers = version => version.replace(/^temurin-/, '').split(/[.+]/).map(BigInt);
+const numbers = version => version.replace(/^temurin-/, '').replace(/\.LTS$/, '').split(/[.+]/).map(BigInt);
 const exact = version => version.replace(/^temurin-/, '').split('+')[0].split('.').length >= 3;
 const matches = (version, range) => version === range || (range.startsWith('temurin-') && !range.includes('+') && version.startsWith(`${range}+`)) || (!exact(range) && version.startsWith(`${range}.`));
 const compare = (left, right) => {
@@ -28,7 +28,7 @@ function versionFor(tool, value) {
   if (typeof value !== 'string' || value.length > 100) throw new Error('版本必须为数字点分');
   const valueNumbers = tool === 'java' ? value.replace(/^temurin-/, '') : value;
   const [base, build, ...extra] = valueNumbers.split('+');
-  if (!numeric.test(base) || extra.length || (build !== undefined && (tool !== 'java' || !/^(?:0|[1-9]\d*)$/.test(build) || base.split('.').length < 3))) throw new Error(`非法版本: ${value}`);
+  if (!numeric.test(base) || extra.length || (build !== undefined && (tool !== 'java' || !/^(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*))*(?:\.LTS)?$/.test(build) || base.split('.').length < 3))) throw new Error(`非法版本: ${value}`);
   return tool === 'java' ? `temurin-${valueNumbers}` : valueNumbers;
 }
 
