@@ -8,11 +8,21 @@ const moduleUrl = new URL('../environment.mjs', import.meta.url).href;
 
 // qemu 用户态模拟下 comm 字段可能不可解析，只在能读出状态时断言
 function assertReaped(pidFile) {
-  const pid = fs.readFileSync(pidFile, 'utf8').trim();
+  const pid = waitFor(pidFile).trim();
   const status = `/proc/${pid}/stat`;
   if (!fs.existsSync(status)) return;
   const state = /\)\s+(\S)/.exec(fs.readFileSync(status, 'utf8'))?.[1];
   if (state) assert.equal(state, 'Z');
+}
+
+// 模拟环境下子进程启动明显更慢，等待 pid 文件落盘
+function waitFor(file, timeoutMs = 5 * 1000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!fs.existsSync(file)) {
+    if (Date.now() > deadline) throw new Error(`等待超时: ${file}`);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  }
+  return fs.readFileSync(file, 'utf8');
 }
 
 test('后端执行返回stdout和真实退出码，不把失败当成功', async () => {
@@ -32,7 +42,8 @@ test('Linux嵌套包装共享外层任务组，超时后不遗留内层命令', 
   const pidFile = path.join(root, 'pid');
   try {
     const inner = `const {runManagedCommand}=await import(${JSON.stringify(moduleUrl)}); await runManagedCommand('/bin/sh',['-c','trap "" TERM; echo $$ > "$1"; while :; do sleep 1; done','test',${JSON.stringify(pidFile)}]);`;
-    const result = await implementation.runManagedCommand(process.execPath, ['--input-type=module', '-e', inner], { capture: true, timeoutMs: 1000 });
+    // 模拟环境下内层 Node 启动需要数秒，超时预算必须覆盖它，否则 pid 文件不会出现
+    const result = await implementation.runManagedCommand(process.execPath, ['--input-type=module', '-e', inner], { capture: true, timeoutMs: 15 * 1000 });
     assert.notEqual(result.code, 0);
     assertReaped(pidFile);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
