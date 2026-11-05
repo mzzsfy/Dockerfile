@@ -22,7 +22,7 @@ docker run -d --name dsh -p 3080:3080 -v dsh-home:/root dsh-local
 | `/root/.local/share/mise` | 后端安装的完整工具链文件 |
 | `/root/.persist/toolchains` | 包装器版本要求、精确默认版本、隔离配置 |
 | `/root/.cache/mise` | 工具安装缓存 |
-| `/root/.persist/manifests` | apt 恢复目标、中断记录和协调锁 |
+| `/root/.persist/manifests` | apt 恢复目标、源快照、中断记录和协调锁 |
 | `/root/.persist/apt-cache` | apt 下载缓存 |
 | `/root/.persist/restore` | apt、工具、后置脚本各自的状态 |
 | `/root/.dsh/container` | 用户路径映射和固定钩子 |
@@ -114,6 +114,19 @@ PATH 中的 apt/apt-get 包装完整事务并保存新增手工包目标。系�
 模拟或只下载不改目标；失败事务保留确认完成的变更，半配置不视为卸载。后台每包重新读取目标并与用户操作协调，避免已卸载的软件按旧快照装回。包按名称恢复，不锁旧版本，第三方源和签名密钥不自动迁移。
 
 保留下载缓存减少下载；本轮未实现通用离线、全量依赖快照或缓存优先批量重放。apt 安装的 JDK/Go/Python仍由apt管理，不搬到mise。不得把工具链直接复用与apt重新安装混为一谈。
+
+## apt 源与密钥快照
+
+`/etc/apt` 属于镜像层，重建后用户换过的源和加过的密钥必然丢失。为此镜像预置 `/etc/apt/apt.conf.d/99-dsh-source-snapshot`，在每次 dpkg 写操作后触发 `dsh-env snapshot-apt-sources`：
+
+- 快照范围为 `sources.list`、`sources.list.d/`、`keyrings/`、`trusted.gpg.d/` 及钩子自身，打包到 `/root/.persist/manifests/apt-sources.tar.gz`；内容未变化不重写。
+- 钩子对包装器调用、直接调用 `/usr/bin/apt-get`、第三方安装脚本一律生效；包装器事务成功后也内联快照一次，因此即使钩子缺失也不丢状态。
+- 恢复在 `restore()` 最前、包恢复之前执行：解包到临时目录后逐文件比对。目标缺失时恢复；目标仍是镜像原始内容（与构建期记录的 `apt-sources-baseline.json` 哈希一致）时用快照覆盖；否则视为本容器内的改动，保留不动。钩子按内容比对自愈，镜像层丢失也能重建。
+- 快照损坏只报错并跳过，不阻塞软件包恢复并与用户操作无关。`dsh-env status` 的 `aptSourcesSnapshot` 字段显示快照是否存在，`dsh-env snapshot-apt-sources` 可手动触发。
+
+`/usr/share/keyrings` 不纳入快照：该目录由系统包拥有，目录级快照会与 dpkg 数据库冲突。安装在这类路径的密钥重建后需重装对应源包。
+
+快照以系统目录现况为准，不做意图推断：用户删除某个源文件后再执行 apt 操作，快照随之更新，重建不会把它装回。
 
 ## 自定义目录映射
 

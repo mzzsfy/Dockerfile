@@ -65,9 +65,7 @@ jobs:
       - name: Verify environment persistence
         if: steps.check.outputs.skip != 'true'
         timeout-minutes: 40
-        run: |
-          docker run --rm --entrypoint sh -v "$PWD/dsh:/source:ro" dsh-persistence-test -c 'node --test /source/tests/*.test.mjs'
-          sh dsh/tests/smoke.sh dsh-persistence-test
+        run: sh dsh/tests/ci.sh dsh-persistence-test full
 
       # build 并且 push docker 镜像
       - name: Build and push

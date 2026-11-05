@@ -1,0 +1,74 @@
+name: dsh test
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - dsh/**
+      - .github/workflows/dsh-test.yml
+  pull_request:
+    paths:
+      - dsh/**
+      - .github/workflows/dsh-test.yml
+jobs:
+  # 单元测试与完整容器验收在 amd64 上执行
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Out
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build test image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./dsh
+          load: true
+          tags: dsh-test-amd64
+          platforms: linux/amd64
+          cache-from: type=gha,scope=dsh-amd64
+          cache-to: type=gha,mode=max,scope=dsh-amd64
+
+      - name: Unit tests
+        run: docker run --rm --entrypoint sh -v "$PWD/dsh:/source:ro" dsh-test-amd64 -c 'node --test /source/tests/*.test.mjs'
+
+  smoke:
+    needs: unit
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # amd64 跑完整验收，含真实工具链下载与断网复用
+          - platform: linux/amd64
+            tag: dsh-test-amd64
+            scope: full
+          # arm64 经 qemu 执行，跳过下载量大的工具链段，覆盖 apt 包装、源快照、钩子与进程管理
+          - platform: linux/arm64/v8
+            tag: dsh-test-arm64
+            scope: lite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Out
+        uses: actions/checkout@v7
+
+      - name: Set up QEMU
+        if: matrix.platform != 'linux/amd64'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build test image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./dsh
+          load: true
+          tags: ${{ matrix.tag }}
+          platforms: ${{ matrix.platform }}
+          cache-from: type=gha,scope=dsh-${{ matrix.tag }}
+          cache-to: type=gha,mode=max,scope=dsh-${{ matrix.tag }}
+
+      - name: Environment persistence
+        timeout-minutes: 60
+        run: sh dsh/tests/ci.sh "${{ matrix.tag }}" "${{ matrix.scope }}"

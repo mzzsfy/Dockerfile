@@ -16,6 +16,7 @@ RUN mkdir -p /usr/local/lib/dsh-env/bin \
   && for command in go gofmt java javac jar javadoc jshell python python3 pip pip3; do ln -s ../tool-proxy /usr/local/lib/dsh-env/bin/$command; done
 COPY --chmod=0755 dsh-env /usr/local/bin/dsh-env
 COPY --chmod=0755 apt-persist /usr/local/bin/apt
+COPY --chmod=0644 apt-hook.conf /etc/apt/apt.conf.d/99-dsh-source-snapshot
 RUN ln -s apt /usr/local/bin/apt-get \
   && rm -f /etc/apt/apt.conf.d/docker-clean \
   && /usr/local/bin/dsh-env baseline

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -68,6 +69,61 @@ test('固定前置脚本失败会传播退出结果，缺省脚本允许启动',
     const hook = join(root, 'before-start.sh');
     writeFileSync(hook, 'exit 7\n');
     assert.equal(await implementation.runHook(hook, process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : '/bin/sh'), 7);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('源恢复按缺失、镜像原始内容、用户改动三态处理，钩子内容比对自愈', () => {
+  assert.equal(typeof implementation.applySourceEntries, 'function', '缺少源恢复功能');
+  const root = mkdtempSync(join(tmpdir(), 'dsh-src-'));
+  const key = 'etc/apt/sources.list.d/debian.sources';
+  const hook = 'etc/apt/apt.conf.d/99-dsh-source-snapshot';
+  const file = relative => join(root, 'target', relative);
+  const baseline = { [key]: createHash('sha256').update('image-original').digest('hex') };
+  try {
+    mkdirSync(join(root, 'extracted/etc/apt/sources.list.d'), { recursive: true });
+    mkdirSync(join(root, 'extracted/etc/apt/apt.conf.d'), { recursive: true });
+    mkdirSync(join(root, 'target/etc/apt/sources.list.d'), { recursive: true });
+    mkdirSync(join(root, 'target/etc/apt/apt.conf.d'), { recursive: true });
+    writeFileSync(join(root, 'extracted', key), 'snapshot');
+    writeFileSync(join(root, 'extracted', hook), 'hook');
+    writeFileSync(file(hook), 'stale');
+    // 缺失时恢复
+    implementation.applySourceEntries(join(root, 'extracted'), join(root, 'target'), baseline);
+    assert.equal(readFileSync(file(key), 'utf8'), 'snapshot');
+    assert.equal(readFileSync(file(hook), 'utf8'), 'hook');
+    // 仍是镜像原始内容时用快照覆盖
+    writeFileSync(file(key), 'image-original');
+    implementation.applySourceEntries(join(root, 'extracted'), join(root, 'target'), baseline);
+    assert.equal(readFileSync(file(key), 'utf8'), 'snapshot');
+    // 本容器内的改动保留
+    writeFileSync(file(key), 'user-edit');
+    implementation.applySourceEntries(join(root, 'extracted'), join(root, 'target'), baseline);
+    assert.equal(readFileSync(file(key), 'utf8'), 'user-edit');
+    // 快照外的新增文件不受影响
+    writeFileSync(file('etc/apt/sources.list.d/custom.list'), 'custom');
+    implementation.applySourceEntries(join(root, 'extracted'), join(root, 'target'), baseline);
+    assert.equal(readFileSync(file('etc/apt/sources.list.d/custom.list'), 'utf8'), 'custom');
+    // 符号链接不作为文件复制（Windows 创建文件链接需要特权）
+    if (process.platform !== 'win32') {
+      symlinkSync('debian.sources', join(root, 'extracted/etc/apt/sources.list.d/link.list'), 'file');
+      implementation.applySourceEntries(join(root, 'extracted'), join(root, 'target'), baseline);
+      assert.equal(statSync(file('etc/apt/sources.list.d/link.list'), { throwIfNoEntry: false }), undefined, '符号链接不应被复制为普通文件');
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('哈希基线只覆盖存在的源路径且跳过钩子自身', () => {
+  assert.equal(typeof implementation.collectHashes, 'function', '缺少源基线采集');
+  const root = mkdtempSync(join(tmpdir(), 'dsh-hash-'));
+  try {
+    assert.deepEqual(implementation.collectHashes(root), {});
+    mkdirSync(join(root, 'etc/apt/sources.list.d'), { recursive: true });
+    mkdirSync(join(root, 'etc/apt/apt.conf.d'), { recursive: true });
+    writeFileSync(join(root, 'etc/apt/sources.list.d/debian.sources'), 'a');
+    writeFileSync(join(root, 'etc/apt/apt.conf.d/99-dsh-source-snapshot'), 'hook');
+    const hashes = implementation.collectHashes(root);
+    assert.deepEqual(Object.keys(hashes), ['etc/apt/sources.list.d/debian.sources']);
+    assert.equal(hashes['etc/apt/sources.list.d/debian.sources'], createHash('sha256').update('a').digest('hex'));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

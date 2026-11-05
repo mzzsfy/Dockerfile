@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const HOME = '/root';
@@ -10,6 +11,10 @@ const CONFIG = '/root/.dsh/container';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PACKAGE = /^[a-z0-9][a-z0-9+.-]*(?::[a-z0-9][a-z0-9-]*)?$/;
 const SYSTEM_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+const HOOK_FILE = '/etc/apt/apt.conf.d/99-dsh-source-snapshot';
+const HOOK_CONTENT = 'DPkg::Post-Invoke { "/usr/local/bin/dsh-env snapshot-apt-sources >/dev/null 2>&1 || true"; };\n';
+const SOURCES_TAR = `${STORE}/manifests/apt-sources.tar.gz`;
+const SOURCE_PATHS = ['etc/apt/sources.list', 'etc/apt/sources.list.d', 'etc/apt/keyrings', 'etc/apt/trusted.gpg.d', 'etc/apt/apt.conf.d/99-dsh-source-snapshot'];
 const aptEnv = () => ({ ...process.env, PATH: SYSTEM_PATH });
 const within = (parent, child) => child === parent || child.startsWith(`${parent}/`);
 
@@ -192,6 +197,111 @@ function atomicJson(file, value) {
   }
 }
 
+function tarList(file = SOURCES_TAR) {
+  try { return execFileSync('/usr/bin/tar', ['-tzf', file], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split('\n').filter(Boolean).sort(); }
+  catch { return null; }
+}
+
+function snapshotSources() {
+  initialize();
+  const temporary = `${SOURCES_TAR}.${process.pid}.tmp`;
+  try {
+    execFileSync('/usr/bin/tar', ['-czf', temporary, '-C', '/', ...SOURCE_PATHS.filter(entry => stat(path.join('/', entry)))], { stdio: 'ignore' });
+    if (JSON.stringify(tarList(temporary)) === JSON.stringify(tarList())) return;
+    fs.mkdirSync(path.dirname(SOURCES_TAR), { recursive: true });
+    fs.renameSync(temporary, SOURCES_TAR);
+    console.log('[environment] apt 源状态已快照');
+  } finally { fs.rmSync(temporary, { force: true }); }
+}
+
+const HOOK_RELATIVE = HOOK_FILE.slice(1);
+const BASELINE_SOURCES = `${HERE}/apt-sources-baseline.json`;
+
+function fileHash(file) {
+  try { return createHash('sha256').update(fs.readFileSync(file)).digest('hex'); }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+}
+
+export function collectHashes(root) {
+  const result = {};
+  function walk(directory, prefix) {
+    let entries;
+    try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
+    catch (error) { if (error.code === 'ENOENT') return; throw error; }
+    for (const entry of entries) {
+      const relative = `${prefix}/${entry.name}`;
+      if (relative === HOOK_RELATIVE) continue;
+      if (entry.isDirectory()) walk(path.join(directory, entry.name), relative);
+      else if (entry.isFile()) result[relative] = fileHash(path.join(directory, entry.name));
+    }
+  }
+  for (const relative of SOURCE_PATHS) {
+    if (relative === HOOK_RELATIVE) continue;
+    const entry = stat(path.join(root, relative));
+    if (!entry) continue;
+    if (entry.isDirectory()) walk(path.join(root, relative), relative);
+    else if (entry.isFile()) result[relative] = fileHash(path.join(root, relative));
+  }
+  return result;
+}
+
+export function applySourceEntries(extracted, target, baseline = {}) {
+  for (const relative of SOURCE_PATHS) {
+    const entry = stat(path.join(extracted, relative));
+    if (!entry) continue;
+    const destination = path.join(target, relative);
+    if (relative === HOOK_RELATIVE) {
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      if (stat(destination)?.isFile() && fs.readFileSync(destination, 'utf8') === fs.readFileSync(path.join(extracted, relative), 'utf8')) continue;
+      fs.copyFileSync(path.join(extracted, relative), destination);
+      continue;
+    }
+    if (entry.isDirectory()) copyEntries(path.join(extracted, relative), destination, `${relative}/`, baseline);
+    else if (shouldRestore(relative, destination, baseline)) {
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.copyFileSync(path.join(extracted, relative), destination);
+    }
+  }
+}
+
+/** 目标缺失或仍是镜像原始内容时恢复；本容器内的改动优先保留 */
+function shouldRestore(relative, destination, baseline) {
+  const current = fileHash(destination);
+  if (current === null) return true;
+  return baseline[relative] !== undefined && current === baseline[relative];
+}
+
+function copyEntries(source, destination, prefix, baseline) {
+  fs.mkdirSync(destination, { recursive: true });
+  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+    const from = path.join(source, entry.name);
+    const to = path.join(destination, entry.name);
+    const relative = `${prefix}${entry.name}`;
+    if (entry.isDirectory()) copyEntries(from, to, `${relative}/`, baseline);
+    else if (entry.isFile() && shouldRestore(relative, to, baseline)) fs.copyFileSync(from, to);
+  }
+}
+
+function ensureHook() {
+  if (stat(HOOK_FILE)?.isFile() && fs.readFileSync(HOOK_FILE, 'utf8') === HOOK_CONTENT) return;
+  fs.mkdirSync(path.dirname(HOOK_FILE), { recursive: true });
+  atomicText(HOOK_FILE, HOOK_CONTENT);
+}
+
+function restoreSources() {
+  ensureHook();
+  if (!stat(SOURCES_TAR)?.isFile()) return;
+  const extracted = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-sources-'));
+  try {
+    execFileSync('/usr/bin/tar', ['-xzf', SOURCES_TAR, '-C', extracted], { stdio: 'ignore' });
+  } catch (error) {
+    console.error(`[environment] apt 源快照损坏,跳过恢复: ${error.message}`);
+    return;
+  }
+  try { applySourceEntries(extracted, '/', readJson(BASELINE_SOURCES, {})); } finally { fs.rmSync(extracted, { recursive: true, force: true }); }
+  console.log('[environment] apt 源快照已核对');
+}
+
 function output(command, args) {
   const result = spawnSync(command, args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
   if (result.error || result.status !== 0) throw new Error(result.error?.message || result.stderr || `${command} failed`);
@@ -247,6 +357,7 @@ async function aptTransaction(binary, args) {
   const baseline = readJson(`${HERE}/baseline.json`, []);
   atomicJson(manifest, mergeTargets(desired, baseline, before, after, code === 0 ? cancelled : []));
   fs.unlinkSync(journal);
+  if (code === 0) { try { snapshotSources(); } catch (error) { console.error(`[environment] apt 源快照失败: ${error.message}`); } }
   if (code !== 0) console.error(`[environment] apt 退出 ${code}，已保存确认完成的变更`);
   return code;
 }
@@ -270,6 +381,7 @@ async function restore() {
   initialize();
   const failed = [];
   if (stat(journal)) { state({ phase: 'failed', error: '未完成的 apt 事务，需要 dsh-env reconcile' }); return 1; }
+  restoreSources();
   let desired = targets();
   const installed = snapshot().installed;
   const missing = desired.filter(name => !installed.includes(name));
@@ -412,9 +524,16 @@ async function supervise(command, preparePlugins = false) {
 async function main(args) {
   const [command, ...rest] = args;
   switch (command) {
-    case 'baseline': atomicJson(`${HERE}/baseline.json`, snapshot().installed); return 0;
+    case 'baseline': atomicJson(`${HERE}/baseline.json`, snapshot().installed); atomicJson(BASELINE_SOURCES, collectHashes('/')); return 0;
     case 'apt': return locked(['apt-locked', ...rest]);
     case 'apt-locked': return aptTransaction(rest[0], rest.slice(1));
+    case 'snapshot-apt-sources': {
+      initialize();
+      const code = await launch('/usr/bin/flock', ['--exclusive', '--nonblock', '--conflict-exit-code', '75', '--no-fork', `${STORE}/manifests/operation.lock`, process.execPath, fileURLToPath(import.meta.url), 'snapshot-apt-sources-locked']).done;
+      if (code === 75) return 0;
+      return code;
+    }
+    case 'snapshot-apt-sources-locked': { try { snapshotSources(); return 0; } catch (error) { console.error(`[environment] apt 源快照失败: ${error.message}`); return 0; } }
     case 'apt-update': return launch('/usr/bin/apt-get', [...aptOptions, 'update'], { env: aptEnv() }).done;
     case 'restore-one': return restoreOne(rest[0]);
     case 'tool-dependencies': return toolDependencies();
@@ -449,8 +568,8 @@ async function main(args) {
     }
     case 'reconcile': return locked(['reconcile-locked']);
     case 'reconcile-locked': reconcile(); return 0;
-    case 'status': console.log(JSON.stringify({ apt: readJson(`${STORE}/restore/status.json`, null), tools: readJson(`${STORE}/restore/tools.json`, null), afterHook: readJson(`${STORE}/restore/after-hook.json`, null), interrupted: readJson(journal, null) }, null, 2)); return 0;
-    case '--help': case 'help': console.log('dsh-env install TOOL[@VERSION] | upgrade [TOOL] | use TOOL@VERSION | remove TOOL@VERSION | list | exec TOOL[@VERSION] -- COMMAND [ARGS...] | status | reconcile\n白名单: go、java (jdk)、python；重建不自动升级；use不下载；remove拒绝当前默认版本。'); return 0;
+    case 'status': console.log(JSON.stringify({ apt: readJson(`${STORE}/restore/status.json`, null), tools: readJson(`${STORE}/restore/tools.json`, null), aptSourcesSnapshot: stat(SOURCES_TAR)?.isFile() ?? false, afterHook: readJson(`${STORE}/restore/after-hook.json`, null), interrupted: readJson(journal, null) }, null, 2)); return 0;
+    case '--help': case 'help': console.log('dsh-env install TOOL[@VERSION] | upgrade [TOOL] | use TOOL@VERSION | remove TOOL@VERSION | list | exec TOOL[@VERSION] -- COMMAND [ARGS...] | status | reconcile | snapshot-apt-sources\n白名单: go、java (jdk)、python；重建不自动升级；use不下载；remove拒绝当前默认版本。'); return 0;
     default: throw new Error('未知命令，执行 dsh-env --help 查看用法');
   }
 }
