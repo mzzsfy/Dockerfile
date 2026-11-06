@@ -32,16 +32,16 @@ function newUrl(urlStr) {
 }
 __name(newUrl, "newUrl");
 function token(request, url, env, ctx) {
-  let scope = url.searchParams.get("scope");
-  let name = scope.split(":")[1];
-  if (!name.includes("/")) {
+  let scope = url.searchParams.get("scope") || "";
+  let name = scope.split(":")[1] || "";
+  if (name && !name.includes("/")) {
     let oldHref = url.href;
     url.searchParams.set("scope", scope.replace(":" + name, ":library/" + name));
     console.log("\u66FF\u6362\u955C\u50CF\u540D\u79F0", oldHref, url.href);
     name = "library/" + name;
   }
   if (env["whitelist"] && scope) {
-    if (!env["whitelist"].split(",").some((e) => name.startsWith(e))) {
+    if (!name || !env["whitelist"].split(",").some((e) => name.startsWith(e))) {
       console.log("\u975E\u767D\u540D\u5355\u955C\u50CF,\u62D2\u7EDD\u8BBF\u95EE", name);
       return new Response("access denied", { status: 404 });
     }
@@ -106,7 +106,7 @@ var index_default = {
         headers: {}
       });
     }
-    if (pathname.includes("/token") && (url.searchParams.has("scope") || url.searchParams.has("service"))) {
+    if (pathname.includes("/token") && (url.searchParams.has("scope") || url.searchParams.has("service") || pathname.startsWith("/token/"))) {
       return token(request, url, env, ctx);
     }
     let l = 0;
