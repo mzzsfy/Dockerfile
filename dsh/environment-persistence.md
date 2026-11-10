@@ -26,6 +26,7 @@ docker run -d --name dsh -p 3080:3080 -v dsh-home:/root dsh-local
 | `/root/.persist/apt-cache` | apt 下载缓存 |
 | `/root/.persist/restore` | apt、工具、后置脚本各自的状态 |
 | `/root/.dsh/container` | 用户路径映射和固定钩子 |
+| `/root/.agents/skills` | 内置指导 skill 的释放位置；启动时缺失才补，不覆盖已有目录 |
 
 安装结果直接保留；重建不重新复制完整工具目录。DSH、宿主 Node、pnpm、mise 本体留在镜像内。不要手工修改内部注册表或用裸 mise 卸载包装器管理的工具。
 
@@ -87,7 +88,7 @@ docker exec dsh dsh-env exec python -- python --version
 
 启动顺序：
 
-1. 加载环境脚本，初始化本地状态，应用目录映射。
+1. 加载环境脚本，初始化本地状态，释放内置 skill 到 `/root/.agents/skills`，应用目录映射。
 2. 执行用户前置钩子。
 3. 按原有逻辑准备 DSH 插件。
 4. 创建 DSH 服务进程。

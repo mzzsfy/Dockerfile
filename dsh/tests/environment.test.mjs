@@ -137,3 +137,84 @@ test('路径文本将持久源目录映射到目标并拒绝覆盖系统目录',
   }
   assert.throws(() => implementation.parseMappings('/root/a:/data/a\n/root/b:/data/a/b'));
 });
+
+test('启动准备把内置 skill 释放到用户目录，已有目录不覆盖', (t) => {
+  const error = t.mock.method(console, 'error', () => {});
+  assert.equal(typeof implementation.releaseBundledSkills, 'function', '缺少内置 skill 释放功能');
+  const root = mkdtempSync(join(tmpdir(), 'dsh-skill-release-'));
+  try {
+    const source = join(root, 'source');
+    const target = join(root, 'agents/skills');
+    mkdirSync(join(source, 'demo'), { recursive: true });
+    writeFileSync(join(source, 'demo', 'SKILL.md'), 'bundled');
+    implementation.releaseBundledSkills(source, target);
+    assert.equal(readFileSync(join(target, 'demo', 'SKILL.md'), 'utf8'), 'bundled');
+    writeFileSync(join(target, 'demo', 'SKILL.md'), 'user');
+    writeFileSync(join(target, 'demo', 'references.md'), 'keep');
+    implementation.releaseBundledSkills(source, target);
+    assert.equal(readFileSync(join(target, 'demo', 'SKILL.md'), 'utf8'), 'user');
+    assert.equal(readFileSync(join(target, 'demo', 'references.md'), 'utf8'), 'keep');
+    rmSync(join(target, 'demo', 'SKILL.md'));
+    implementation.releaseBundledSkills(source, target);
+    assert.equal(statSync(join(target, 'demo', 'SKILL.md'), { throwIfNoEntry: false }), undefined);
+    assert.equal(readFileSync(join(target, 'demo', 'references.md'), 'utf8'), 'keep');
+    assert.equal(error.mock.callCount(), 1);
+    rmSync(join(target, 'demo'), { recursive: true });
+    implementation.releaseBundledSkills(source, target);
+    assert.equal(readFileSync(join(target, 'demo', 'SKILL.md'), 'utf8'), 'bundled');
+    implementation.releaseBundledSkills(join(root, 'missing'), target);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('目标条目不是目录时跳过且不影响其他条目', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-skill-partial-'));
+  try {
+    const source = join(root, 'source');
+    const target = join(root, 'agents/skills');
+    for (const name of ['a', 'b']) {
+      mkdirSync(join(source, name), { recursive: true });
+      writeFileSync(join(source, name, 'SKILL.md'), name);
+    }
+    mkdirSync(target, { recursive: true });
+    writeFileSync(join(target, 'a'), 'block');
+    implementation.releaseBundledSkills(source, target);
+    assert.equal(readFileSync(join(target, 'a'), 'utf8'), 'block');
+    assert.equal(readFileSync(join(target, 'b', 'SKILL.md'), 'utf8'), 'b');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('释放目标根是软链时不写到固定路径之外', { skip: process.platform === 'win32' }, () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-skill-symlink-'));
+  try {
+    const source = join(root, 'source');
+    const real = join(root, 'real');
+    const target = join(root, 'agents/skills');
+    mkdirSync(join(source, 'demo'), { recursive: true });
+    mkdirSync(real, { recursive: true });
+    mkdirSync(join(root, 'agents'), { recursive: true });
+    writeFileSync(join(source, 'demo', 'SKILL.md'), 'bundled');
+    symlinkSync(real, target);
+    implementation.releaseBundledSkills(source, target);
+    let leaked = true;
+    try { statSync(join(real, 'demo')); } catch { leaked = false; }
+    assert.equal(leaked, false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('释放目标父目录是软链时不写到固定路径之外', { skip: process.platform === 'win32' }, (t) => {
+  const error = t.mock.method(console, 'error', () => {});
+  const root = mkdtempSync(join(tmpdir(), 'dsh-skill-parent-'));
+  try {
+    const source = join(root, 'source');
+    const real = join(root, 'real');
+    mkdirSync(join(source, 'demo'), { recursive: true });
+    mkdirSync(real, { recursive: true });
+    writeFileSync(join(source, 'demo', 'SKILL.md'), 'bundled');
+    symlinkSync(real, join(root, 'agents'));
+    implementation.releaseBundledSkills(source, join(root, 'agents/skills'));
+    let leaked = true;
+    try { statSync(join(real, 'skills', 'demo')); } catch { leaked = false; }
+    assert.equal(leaked, false);
+    assert.equal(error.mock.callCount(), 1);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

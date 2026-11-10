@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 const HOME = '/root';
 const STORE = '/root/.persist';
 const CONFIG = '/root/.dsh/container';
+const BUNDLED_SKILLS = '/usr/local/share/dsh/skills';
+const RELEASED_SKILLS = '/root/.agents/skills';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PACKAGE = /^[a-z0-9][a-z0-9+.-]*(?::[a-z0-9][a-z0-9-]*)?$/;
 const SYSTEM_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
@@ -477,8 +479,40 @@ async function maintainTools() {
   return toolsLocked(['restore']);
 }
 
+export function releaseBundledSkills(source = BUNDLED_SKILLS, target = RELEASED_SKILLS) {
+  if (!stat(source)) return;
+  const targetStat = stat(target);
+  if (targetStat && (!targetStat.isDirectory() || targetStat.isSymbolicLink())) {
+    console.error(`[environment] 内置 skill 目标不是普通目录，跳过释放: ${target}`);
+    return;
+  }
+  try { plainParents(target); } catch (error) {
+    console.error(`[environment] 内置 skill 目标路径不可用，跳过释放: ${error.message}`);
+    return;
+  }
+  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const dest = path.join(target, entry.name);
+    try {
+      const destStat = stat(dest);
+      if (destStat) {
+        if (!destStat.isDirectory() || destStat.isSymbolicLink()) console.error(`[environment] 内置 skill 目标条目不是目录，跳过: ${dest}`);
+        else if (!stat(path.join(dest, 'SKILL.md'))) console.error(`[environment] 内置 skill 已存在但缺少 SKILL.md: ${dest}`);
+        continue;
+      }
+      const temp = path.join(target, `.${entry.name}.tmp`);
+      fs.rmSync(temp, { recursive: true, force: true });
+      fs.cpSync(path.join(source, entry.name), temp, { recursive: true });
+      fs.renameSync(temp, dest);
+    } catch (error) {
+      console.error(`[environment] 内置 skill 释放失败(${entry.name}): ${error.message}`);
+    }
+  }
+}
+
 async function prepare() {
   initialize();
+  try { releaseBundledSkills(); } catch (error) { console.error(`[environment] 内置 skill 释放失败: ${error.message}`); }
   const file = `${CONFIG}/paths.txt`;
   const mappings = parseMappings(stat(file) ? fs.readFileSync(file, 'utf8') : '');
   for (const mapping of mappings) applyMapping(mapping);

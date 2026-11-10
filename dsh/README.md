@@ -33,6 +33,14 @@ docker run -d --name dsh -p 3080:3080 -v dsh-home:/root dsh-local
 
 **保存文件不等于保存完整 Linux 系统。** 手工修改的系统配置、第三方软件源、任意安装脚本产生的系统文件不会自动备份；主目录中的工具也可能依赖新镜像尚未安装的系统库。
 
+## 内置 skill
+
+镜像在 `/usr/local/share/dsh/skills` 自带 `mzzsfy-dsh-help`。容器启动时、DSH 服务创建前释放到 `/root/.agents/skills/mzzsfy-dsh-help/`，该目录已存在则跳过，不覆盖用户版本。该 skill 的默认发现根是 `~/.agents/skills`，standard（默认 web）、ptc、cordis 会扫描，minimal 不提供 skill 工具与本地发现；覆盖 `DSH_AGENTS_HOME` 或 HOME 后，释放位置不变但默认用户级根扫不到。`/root/.agents/skills` 及其父目录必须是普通目录，软链或非目录会跳过释放并记录日志。它指导容器内的 AI 使用 `dsh-env`、apt 持久化、目录映射与启动钩子，并说明重建后的恢复顺序。
+
+- 已有卷升级镜像后重启只会补缺失的 skill 目录；已有目录缺 `SKILL.md` 只告警、不补。镜像模板更新不会覆盖已存在的副本。要同步新版本，删除 `/root/.agents/skills/mzzsfy-dsh-help` 后重启。
+- 想修改内容，直接编辑 `/root/.agents/skills/mzzsfy-dsh-help/SKILL.md`；改镜像内模板不会更新已有副本。
+- 不提供关闭释放的开关。
+
 ## 安装与恢复软件
 
 以下命令在容器终端执行，也可先用 `docker exec -it dsh sh` 进入。

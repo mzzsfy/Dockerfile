@@ -21,6 +21,8 @@ RUN ln -s apt /usr/local/bin/apt-get \
   && rm -f /etc/apt/apt.conf.d/docker-clean \
   && /usr/local/bin/dsh-env baseline
 
+COPY skills /usr/local/share/dsh/skills
+
 VOLUME ["/root"]
 
 EXPOSE 3080

@@ -28,6 +28,40 @@ stop_container() {
   docker rm "$container" >/dev/null
 }
 
+# 镜像层固定模板；启动准备复制到用户 skill 根，已有用户版本不覆盖。
+docker run --rm --entrypoint sh "$image" -ec '
+  test -f /usr/local/share/dsh/skills/mzzsfy-dsh-help/SKILL.md
+  test "$(tr -d "\\r" < /usr/local/share/dsh/skills/mzzsfy-dsh-help/SKILL.md | head -n 1)" = "---"
+  tr -d "\\r" < /usr/local/share/dsh/skills/mzzsfy-dsh-help/SKILL.md | grep -q "^name: mzzsfy-dsh-help$"
+'
+docker run --rm --entrypoint sh -v "$volume:/root" "$image" -ec '
+  test ! -e /root/.agents/skills/mzzsfy-dsh-help/SKILL.md
+  dsh-env prepare
+  test -f /root/.agents/skills/mzzsfy-dsh-help/SKILL.md
+  cp /root/.agents/skills/mzzsfy-dsh-help/SKILL.md /tmp/SKILL.md
+  printf user > /root/.agents/skills/mzzsfy-dsh-help/SKILL.md
+  dsh-env prepare
+  test "$(cat /root/.agents/skills/mzzsfy-dsh-help/SKILL.md)" = user
+  cp /tmp/SKILL.md /root/.agents/skills/mzzsfy-dsh-help/SKILL.md
+  rm /root/.agents/skills/mzzsfy-dsh-help/SKILL.md
+  dsh-env prepare
+  test ! -e /root/.agents/skills/mzzsfy-dsh-help/SKILL.md
+  cp /tmp/SKILL.md /root/.agents/skills/mzzsfy-dsh-help/SKILL.md
+'
+# 用公开 apply 与真实构造器，按默认根解析；list 能发现释放到用户根的 skill。
+docker run --rm --entrypoint node -v "$volume:/root" -w /usr/local/lib/node_modules/@deepseek-ai/dsh "$image" --input-type=module -e "
+import { apply } from '@deepseek-ai/dsh-skill-filesystem'
+let factory
+const ctx = { skills: { registerProvider: (fn) => { factory = fn } }, effect: () => {}, on: () => {}, get: () => undefined, logger: { warn: () => {} } }
+apply(ctx, { includeDefaultRoots: true, watch: false })
+const provider = factory({ invalidate: () => {}, signal: new AbortController().signal })
+const listed = await provider.list({ cwd: '/tmp/project' })
+const candidates = Array.isArray(listed) ? listed : listed.candidates
+console.log(JSON.stringify(candidates.map(({ name, source, rank }) => ({ name, source, rank }))))
+const found = candidates.filter((candidate) => candidate.name === 'mzzsfy-dsh-help')
+if (found.length !== 1 || found[0].source !== 'user-agents') process.exit(1)
+"
+
 # apt 包装记录新装目标，模拟与只下载不入清单，卸载取消目标；路径映射与钩子建立。
 docker run --rm --entrypoint sh -v "$volume:/root" "$image" -ec '
   mkdir -p /root/.dsh/container
