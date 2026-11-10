@@ -1,6 +1,17 @@
-// Docker 镜像代理 Worker。
-// host 模式: docker.example.com/v2/...
-// path 模式: mirror.example.com/v2/docker.io/library/nginx/manifests/latest
+/*
+ * 环境变量:
+ *   proxyMode=host|path        host=泛域名，path=路径前缀；默认 path
+ *   whitelist=library/,...     仓库白名单；非通配项前缀匹配；空字符串不限制
+ *   indexText=维护中           首页纯文本；空字符串使用内置说明页
+ *   helpIndexPath=/help        额外帮助页路径；空字符串不启用
+ *   defaultIndex=https://...   首页反代地址，优先于 indexText
+ *   strictDomain=true|false    未知 host 严格模式
+ *   debug=true|false           错误响应带详情
+ *
+ * 简单使用:
+ *   host: docker pull your-host/library/nginx
+ *   path: docker pull your-host/docker.io/library/nginx
+ */
 
 const DOCKER_HUB = "registry-1.docker.io";
 const V2_PREFIX = "/v2/";
@@ -117,13 +128,19 @@ async function handleRegistry(request, url, env) {
   const info = parseRepoPath(url.pathname);
   if (!info) return notFound();
 
-  const hostRegistry = registryForHost(url.hostname);
+  const mode = proxyMode(env);
+  const hostRegistry = mode === "host" ? registryForHost(url.hostname) : null;
   const strict = env.strictDomain === "true";
 
   if (info.ping) {
     if (!hostRegistry) return dockerHubChallenge(url);
     return forward(request, url, new URL(`https://${hostRegistry}${V2_PREFIX}${url.search}`));
   }
+
+  if (mode === "host" && info.registryPrefix) {
+    return textResponse(400, "host mode does not accept registry prefix");
+  }
+  if (mode === "path" && info.unknownRegistry) return forbidden();
 
   if (info.catalog) {
     if (strict && !hostRegistry) return forbidden();
@@ -132,17 +149,16 @@ async function handleRegistry(request, url, env) {
     return forward(request, url, new URL(`https://${registryHost}${V2_PREFIX}_catalog${url.search}`));
   }
 
-  if (info.unknownRegistry && !hostRegistry) return forbidden();
-
-  const registryHost = info.registryHost || hostRegistry || (strict ? null : DOCKER_HUB);
+  const registryHost = hostRegistry || info.registryHost || (strict ? null : DOCKER_HUB);
   if (!registryHost) return forbidden();
 
   const repo = normalizeRepo(registryHost, info.repo);
   if (!repo) return badRequest();
   if (!whitelistAllowed(env, registryHost, repo)) return forbidden();
 
+  const registryPrefix = hostRegistry ? null : info.registryPrefix;
   const upstream = new URL(`https://${registryHost}${V2_PREFIX}${repo}${info.suffix}${url.search}`);
-  return forward(request, url, upstream, { registryPrefix: info.registryPrefix });
+  return forward(request, url, upstream, { registryPrefix });
 }
 
 async function handleToken(request, url, env) {
@@ -263,20 +279,33 @@ async function proxyRedirect(request, clientUrl, upstreamUrl, location) {
 }
 
 async function handleIndex(request, url, env) {
-  if (env.defaultIndex) return proxyDefaultIndex(request, url, env);
+  const isHelp = isHelpPath(url, env);
+  if (env.defaultIndex && !isHelp) return proxyDefaultIndex(request, url, env);
 
   const isRoot = url.pathname === "/" || url.pathname === "/index.html";
-  if (!isRoot) return notFound();
+  if (!isRoot && !isHelp) return notFound();
 
-  const accept = request.headers.get("accept") || "";
-  const userAgent = request.headers.get("user-agent") || "";
-  if (!accept.includes("text/html") && !/mozilla/i.test(userAgent)) {
-    return textResponse(200, "ok");
+  if (!isHelp) {
+    const indexText = env.indexText == null ? "" : String(env.indexText);
+    if (indexText !== "") {
+      const headers = new Headers({
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      applyCors(headers);
+      return new Response(indexText, { status: 200, headers });
+    }
+
+    const accept = request.headers.get("accept") || "";
+    const userAgent = request.headers.get("user-agent") || "";
+    if (!accept.includes("text/html") && !/mozilla/i.test(userAgent)) {
+      return textResponse(200, "ok");
+    }
   }
 
   const headers = new Headers({ "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
   applyCors(headers);
-  return new Response(rootHtml(url.host), { status: 200, headers });
+  return new Response(rootHtml(url.host, proxyMode(env)), { status: 200, headers });
 }
 
 async function proxyDefaultIndex(request, url, env) {
@@ -482,6 +511,26 @@ function registryForHost(hostname) {
   return HOST_BY_ALIAS.get(label) || null;
 }
 
+function proxyMode(env) {
+  return String(env.proxyMode || "path").toLowerCase() === "host" ? "host" : "path";
+}
+
+function helpIndexPath(env) {
+  const raw = env.helpIndexPath == null ? "" : String(env.helpIndexPath).trim();
+  if (raw === "") return null;
+
+  const path = (raw.startsWith("/") ? raw : `/${raw}`)
+    .split(/[?#]/, 1)[0]
+    .replace(/\/+$/, "");
+  if (!path || path === "/" || /^\/(?:v2|token)(?:\/|$)/.test(path)) return null;
+  return path;
+}
+
+function isHelpPath(url, env) {
+  const path = helpIndexPath(env);
+  return Boolean(path && (url.pathname === path || url.pathname === `${path}/`));
+}
+
 function canonicalRegistry(value) {
   const key = value.toLowerCase();
   if (REGISTRY_DEFS[key]) return key;
@@ -526,8 +575,7 @@ function matchesWhitelist(pattern, registryHost, repo) {
     if (!target.startsWith(`${base}/`)) return false;
     return !target.slice(base.length + 1).includes("/");
   }
-  if (normalizedPattern.endsWith("/")) return target.startsWith(normalizedPattern);
-  return target === normalizedPattern;
+  return target.startsWith(normalizedPattern);
 }
 
 function publicFullName(registryHost, repo) {
@@ -774,9 +822,20 @@ function methodNotAllowed() {
   return response;
 }
 
-function rootHtml(host) {
+function rootHtml(host, mode) {
   const registries = [...new Set(Object.values(REGISTRY_DEFS).map((def) => def.publicHost))];
-  const items = registries.map((name) => `<li><code>${escapeHtml(name)}</code></li>`).join("");
+  const base = wildcardBase(host);
+  const items = registries.map((name) => {
+    const target = mode === "host" ? `${hostAlias(name)}.${base}` : `${host}/${name}/`;
+    return `<li><code>${escapeHtml(name)}</code> → <code>${escapeHtml(target)}</code></li>`;
+  }).join("");
+  const usage = mode === "host"
+    ? `<p>泛域名模式：</p>
+<pre>docker pull docker.${escapeHtml(base)}/library/nginx
+docker pull ghcr.${escapeHtml(base)}/owner/repo:tag</pre>`
+    : `<p>路径模式：</p>
+<pre>docker pull ${escapeHtml(host)}/docker.io/library/nginx
+docker pull ${escapeHtml(host)}/ghcr.io/owner/repo:tag</pre>`;
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -794,14 +853,25 @@ li { margin: 2px 0; }
 </head>
 <body>
 <h1>Docker 镜像代理</h1>
-<p>单域名路径模式：</p>
-<pre>docker pull ${escapeHtml(host)}/docker.io/library/nginx
-docker pull ${escapeHtml(host)}/ghcr.io/owner/repo:tag</pre>
+<p>当前模式：${mode === "host" ? "泛域名" : "路径"}；当前 host：<code>${escapeHtml(host)}</code></p>
+${usage}
 <p>支持的 registry：</p>
 <ul>${items}</ul>
-<p>泛域名模式仍可用：<code>docker.example.com/v2/...</code></p>
 </body>
 </html>`;
+}
+
+function hostAlias(publicHost) {
+  const def = Object.values(REGISTRY_DEFS).find((entry) => entry.publicHost === publicHost);
+  return def?.aliases?.[0] || publicHost;
+}
+
+function wildcardBase(host) {
+  const [name, port] = host.split(":");
+  const parts = name.split(".");
+  const ipv4 = parts.length === 4 && parts.every((part) => /^\d+$/.test(part));
+  const base = parts.length > 2 && !ipv4 ? parts.slice(1).join(".") : name;
+  return port ? `${base}:${port}` : base;
 }
 
 function escapeHtml(value) {

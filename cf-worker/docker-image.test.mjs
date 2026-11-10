@@ -77,6 +77,7 @@ test("未知 host 默认走 Docker Hub，保持旧部署兼容", async (t) => {
   const result = await invoke({
     host: "dockerimg.example.com",
     path: "/v2/alpine/manifests/latest",
+    env: { proxyMode: "host" },
   });
 
   assert.equal(result.status, 200);
@@ -109,6 +110,7 @@ test("host 模式 Docker Hub 短名 manifest 补 library", async (t) => {
   const result = await invoke({
     host: "docker.example.com",
     path: "/v2/alpine/manifests/latest",
+    env: { proxyMode: "host" },
     headers: {
       authorization: "Bearer token",
       "cf-connecting-ip": "1.2.3.4",
@@ -135,6 +137,7 @@ test("host 模式 GHCR 命名空间不被改写", async (t) => {
   const result = await invoke({
     host: "ghcr.example.com",
     path: "/v2/owner/repo/manifests/v1",
+    env: { proxyMode: "host" },
   });
 
   assert.equal(result.status, 200);
@@ -180,6 +183,70 @@ test("未知 path 前缀不被当作开放代理", async (t) => {
   assert.equal(mock.calls.length, 0);
 });
 
+test("泛域名 host 优先，路径中的已知 registry 前缀被拒绝", async (t) => {
+  const mock = installFetch(() => json({ schemaVersion: 2 }));
+  t.after(() => mock.restore());
+
+  const other = await invoke({
+    host: "ghcr.example.com",
+    path: "/v2/docker.io/alpine/manifests/latest",
+    env: { proxyMode: "host" },
+  });
+  assert.equal(other.status, 400);
+  assert.equal(other.text, "host mode does not accept registry prefix");
+
+  const same = await invoke({
+    host: "ghcr.example.com",
+    path: "/v2/ghcr.io/owner/repo/manifests/latest",
+    env: { proxyMode: "host" },
+  });
+  assert.equal(same.status, 400);
+
+  const hostOnly = await invoke({
+    host: "ghcr.example.com",
+    path: "/v2/owner/repo/manifests/latest",
+    env: { proxyMode: "host" },
+  });
+  assert.equal(hostOnly.status, 200);
+  assert.equal(mock.calls.length, 1);
+  assert.equal(mock.calls[0].url, "https://ghcr.io/v2/owner/repo/manifests/latest");
+});
+
+test("proxyMode=host 只用泛域名并拒绝路径前缀", async (t) => {
+  const mock = installFetch(() => json({ schemaVersion: 2 }));
+  t.after(() => mock.restore());
+
+  const prefixed = await invoke({
+    host: "mirror.example.com",
+    path: "/v2/docker.io/alpine/manifests/latest",
+    env: { proxyMode: "host" },
+  });
+  assert.equal(prefixed.status, 400);
+  assert.equal(prefixed.text, "host mode does not accept registry prefix");
+
+  const plain = await invoke({
+    host: "mirror.example.com",
+    path: "/v2/alpine/manifests/latest",
+    env: { proxyMode: "host" },
+  });
+  assert.equal(plain.status, 200);
+  assert.equal(mock.calls.length, 1);
+  assert.equal(mock.calls[0].url, "https://registry-1.docker.io/v2/library/alpine/manifests/latest");
+});
+
+test("proxyMode=path 忽略 host 别名，路径前缀决定上游", async (t) => {
+  const mock = installFetch(() => json({ schemaVersion: 2 }));
+  t.after(() => mock.restore());
+
+  const result = await invoke({
+    host: "ghcr.example.com",
+    path: "/v2/docker.io/alpine/manifests/latest",
+    env: { proxyMode: "path" },
+  });
+  assert.equal(result.status, 200);
+  assert.equal(mock.calls[0].url, "https://registry-1.docker.io/v2/library/alpine/manifests/latest");
+});
+
 test("tags/list 与 blob 上传同样补 Docker Hub 短名", async (t) => {
   const mock = installFetch((url) => {
     if (url.includes("/tags/list")) return json({ name: "library/alpine", tags: ["latest"] });
@@ -193,6 +260,7 @@ test("tags/list 与 blob 上传同样补 Docker Hub 短名", async (t) => {
   const tags = await invoke({
     host: "docker.example.com",
     path: "/v2/alpine/tags/list",
+    env: { proxyMode: "host" },
   });
   assert.equal(tags.status, 200);
   assert.equal(mock.calls[0].url, "https://registry-1.docker.io/v2/library/alpine/tags/list");
@@ -202,6 +270,7 @@ test("tags/list 与 blob 上传同样补 Docker Hub 短名", async (t) => {
     method: "POST",
     path: "/v2/alpine/blobs/uploads/",
     body: "",
+    env: { proxyMode: "host" },
   });
   assert.equal(upload.status, 202);
   assert.equal(upload.headers.get("cache-control"), "no-store");
@@ -445,24 +514,31 @@ test("token scope 中的编码穿越被拒绝", async (t) => {
   assert.equal(mock.calls.length, 0);
 });
 
-test("白名单精确项不匹配同前缀仓库", async (t) => {
+test("白名单前缀匹配同前缀仓库", async (t) => {
   const mock = installFetch(() => json({ schemaVersion: 2 }));
   t.after(() => mock.restore());
 
-  const allowed = await invoke({
+  const exact = await invoke({
     host: "docker.example.com",
     path: "/v2/mzzsfy/tts/manifests/latest",
     env: { whitelist: "mzzsfy/tts" },
   });
-  assert.equal(allowed.status, 200);
+  assert.equal(exact.status, 200);
 
-  const denied = await invoke({
+  const prefixed = await invoke({
     host: "docker.example.com",
     path: "/v2/mzzsfy/ttsx/manifests/latest",
     env: { whitelist: "mzzsfy/tts" },
   });
-  assert.equal(denied.status, 403);
-  assert.equal(mock.calls.length, 1);
+  assert.equal(prefixed.status, 200);
+
+  const shortName = await invoke({
+    host: "docker.example.com",
+    path: "/v2/alpine/manifests/latest",
+    env: { whitelist: "library" },
+  });
+  assert.equal(shortName.status, 200);
+  assert.equal(mock.calls.length, 3);
 });
 
 test("白名单前缀生效且空白项不放大权限", async (t) => {
@@ -855,10 +931,159 @@ test("根路径对浏览器返回说明页，对客户端返回 ok", async (t) =
   assert.match(browser.headers.get("content-type"), /text\/html/);
   assert.match(browser.text, /docker\.io/);
   assert.match(browser.text, /ghcr\.io/);
+  assert.match(browser.text, /当前模式：路径/);
+  assert.match(browser.text, /mirror\.example\.com\/docker\.io\/library\/nginx/);
+  assert.match(browser.text, /<code>docker\.io<\/code> → <code>mirror\.example\.com\/docker\.io\/<\/code>/);
+  assert.doesNotMatch(browser.text, /泛域名模式/);
 
   const client = await invoke({ host: "mirror.example.com", path: "/" });
   assert.equal(client.status, 200);
   assert.equal(client.text, "ok");
+  assert.equal(mock.calls.length, 0);
+});
+
+test("proxyMode=host 说明页使用当前 host 的泛域名示例", async (t) => {
+  const mock = installFetch(() => json({ unexpected: true }));
+  t.after(() => mock.restore());
+
+  const browser = await invoke({
+    host: "mirror.example.com",
+    path: "/",
+    headers: { accept: "text/html" },
+    env: { proxyMode: "host" },
+  });
+  assert.equal(browser.status, 200);
+  assert.match(browser.text, /当前模式：泛域名/);
+  assert.match(browser.text, /docker\.example\.com\/library\/nginx/);
+  assert.match(browser.text, /ghcr\.example\.com\/owner\/repo:tag/);
+  assert.match(browser.text, /<code>docker\.io<\/code> → <code>docker\.example\.com<\/code>/);
+  assert.doesNotMatch(browser.text, /mirror\.example\.com\/docker\.io\/library\/nginx/);
+  assert.equal(mock.calls.length, 0);
+});
+
+test("indexText 整页覆盖首页，未设置时保留说明页", async (t) => {
+  const mock = installFetch(() => json({ unexpected: true }));
+  t.after(() => mock.restore());
+
+  const browser = await invoke({
+    host: "mirror.example.com",
+    path: "/",
+    headers: { accept: "text/html" },
+    env: { indexText: "维护中\n请稍后再试" },
+  });
+  assert.equal(browser.status, 200);
+  assert.match(browser.headers.get("content-type"), /text\/plain/);
+  assert.equal(browser.text, "维护中\n请稍后再试");
+
+  const client = await invoke({
+    host: "mirror.example.com",
+    path: "/",
+    env: { indexText: "<b>不是 HTML</b>" },
+  });
+  assert.equal(client.status, 200);
+  assert.equal(client.text, "<b>不是 HTML</b>");
+
+  const fallback = await invoke({
+    host: "mirror.example.com",
+    path: "/",
+    headers: { accept: "text/html" },
+    env: { indexText: "" },
+  });
+  assert.match(fallback.headers.get("content-type"), /text\/html/);
+  assert.equal(mock.calls.length, 0);
+});
+
+test("helpIndexPath 额外展示首页，未设置时不启用", async (t) => {
+  const mock = installFetch(() => json({ unexpected: true }));
+  t.after(() => mock.restore());
+
+  const help = await invoke({
+    host: "mirror.example.com",
+    path: "/help",
+    headers: { accept: "text/html" },
+    env: { helpIndexPath: "/help" },
+  });
+  assert.equal(help.status, 200);
+  assert.match(help.headers.get("content-type"), /text\/html/);
+  assert.match(help.text, /路径模式/);
+  assert.match(help.text, /docker\.io/);
+
+  const trailing = await invoke({
+    host: "mirror.example.com",
+    path: "/help/",
+    headers: { accept: "text/html" },
+    env: { helpIndexPath: "help" },
+  });
+  assert.equal(trailing.status, 200);
+
+  const text = await invoke({
+    host: "mirror.example.com",
+    path: "/help",
+    env: { helpIndexPath: "/help", indexText: "维护中" },
+  });
+  assert.equal(text.status, 200);
+  assert.match(text.headers.get("content-type"), /text\/html/);
+  assert.match(text.text, /路径模式/);
+  assert.doesNotMatch(text.text, /维护中/);
+
+  const root = await invoke({
+    host: "mirror.example.com",
+    path: "/",
+    env: { helpIndexPath: "/help", indexText: "ok" },
+  });
+  assert.equal(root.text, "ok");
+
+  const client = await invoke({
+    host: "mirror.example.com",
+    path: "/help",
+    env: { helpIndexPath: "/help" },
+  });
+  assert.equal(client.status, 200);
+  assert.match(client.headers.get("content-type"), /text\/html/);
+  assert.match(client.text, /路径模式/);
+
+  const disabled = await invoke({ host: "mirror.example.com", path: "/help" });
+  assert.equal(disabled.status, 404);
+  assert.equal(mock.calls.length, 0);
+});
+
+test("helpIndexPath 绕过 defaultIndex 遮蔽，根路径行为不变", async (t) => {
+  const mock = installFetch(() => new Response("<html>hub</html>", {
+    status: 200,
+    headers: { "content-type": "text/html" },
+  }));
+  t.after(() => mock.restore());
+
+  const root = await invoke({
+    host: "mirror.example.com",
+    path: "/",
+    env: { defaultIndex: "https://hub.example.com/", helpIndexPath: "/help" },
+  });
+  assert.equal(root.text, "<html>hub</html>");
+
+  const help = await invoke({
+    host: "mirror.example.com",
+    path: "/help",
+    headers: { accept: "text/html" },
+    env: { defaultIndex: "https://hub.example.com/", helpIndexPath: "/help" },
+  });
+  assert.equal(help.status, 200);
+  assert.match(help.text, /路径模式/);
+  assert.doesNotMatch(help.text, /hub/);
+  assert.equal(mock.calls.length, 1);
+});
+
+test("helpIndexPath 不会占用 /v2 路由", async (t) => {
+  const mock = installFetch(() => json({ unexpected: true }));
+  t.after(() => mock.restore());
+
+  const result = await invoke({
+    host: "mirror.example.com",
+    path: "/v2/",
+    env: { helpIndexPath: "/v2" },
+  });
+  assert.equal(result.status, 401);
+  assert.match(result.headers.get("www-authenticate"), /^Bearer /);
   assert.equal(mock.calls.length, 0);
 });
 
@@ -873,7 +1098,7 @@ test("defaultIndex 不转发 Authorization", async (t) => {
     host: "mirror.example.com",
     path: "/",
     headers: { authorization: "Bearer secret" },
-    env: { defaultIndex: "https://hub.example.com/" },
+    env: { defaultIndex: "https://hub.example.com/", indexText: "不应覆盖 defaultIndex" },
   });
 
   assert.equal(result.status, 200);

@@ -15,7 +15,7 @@ registry 列表，但不做镜像存储、懒同步或摘要校验，只做边�
 
 ### 两种访问模式
 
-host 模式，保留原有用法：
+host 模式，保留原有用法，需要 `proxyMode=host`：
 
 ```bash
 docker pull docker.example.com/library/nginx
@@ -24,7 +24,7 @@ docker pull ghcr.example.com/owner/repo:tag
 
 把 `docker.example.com` 配到 Docker 的 `registry-mirrors` 只适用于 Docker Hub。
 
-path 模式，单域名承载所有 registry，前缀位于 repository 内：
+path 模式，单域名承载所有 registry，前缀位于 repository 内，是默认的 `proxyMode=path`：
 
 ```bash
 docker pull mirror.example.com/docker.io/library/nginx
@@ -36,57 +36,71 @@ Docker 客户端实际请求的是 `/v2/docker.io/library/nginx/manifests/...`�
 配置泛域名或证书。path 模式的中性域名 `/v2/` 由 Worker 直接返回 Docker Hub 等价的认证 challenge，
 不依赖上游 Docker Hub 可达。
 
+两种模式互斥，由 `proxyMode` 切换：
+
+- `proxyMode=host`：只用泛域名，host 首段决定 registry；路径中出现 registry 前缀返回 400。
+- `proxyMode=path`：默认值；host 不参与路由，路径前缀决定 registry；无前缀默认 Docker Hub。
+
 ### push
 
-Docker 凭据按 registry host 隔离，push 前必须登录 Worker 域名，而不是只登录 Docker Hub：
+Docker 凭据按 registry host 隔离，push 前必须登录 Worker 域名，而不是只登录 Docker Hub。下面的命令按
+当前 `proxyMode` 选择：
 
 ```bash
-# host 模式，Docker Hub 凭据
+# proxyMode=host，Docker Hub 凭据
 docker login dockerimg.mzzsfy.eu.org
 docker tag app dockerimg.mzzsfy.eu.org/<namespace>/app:tag
 docker push dockerimg.mzzsfy.eu.org/<namespace>/app:tag
 
-# path 模式，仍然登录 Worker 域名
+# proxyMode=path，仍然登录 Worker 域名
 docker login mirror.example.com
 docker tag app mirror.example.com/docker.io/<namespace>/app:tag
 docker push mirror.example.com/docker.io/<namespace>/app:tag
 
-# GHCR 等私有 registry 建议用独立 host，避免一套凭据混用
+# proxyMode=host，GHCR 等私有 registry 使用独立 host
 docker login ghcr.example.com
 docker tag app ghcr.example.com/<owner>/app:tag
 docker push ghcr.example.com/<owner>/app:tag
+
+# proxyMode=path，GHCR 也走路径前缀
+docker tag app mirror.example.com/ghcr.io/<owner>/app:tag
+docker push mirror.example.com/ghcr.io/<owner>/app:tag
 ```
 
 设置 `whitelist` 时，必须把 push 的目标命名空间加进去，例如 `<namespace>/` 或
 `docker.io/<namespace>/**`。path 模式一个域名只能保存一套 Docker 凭据，多个私有 registry
-建议使用 host 模式分别登录。Cloudflare Workers 有请求体大小限制，超大镜像层可能失败。
+建议使用 `proxyMode=host` 分别登录。Cloudflare Workers 有请求体大小限制，超大镜像层可能失败。
 
 ### 支持的 registry
 
-| path 前缀（完整域名） / host 首段（别名） | 上游 |
-| --- | --- |
-| `docker.io`、`docker` | `registry-1.docker.io` |
-| `ghcr.io`、`ghcr` | `ghcr.io` |
-| `gcr.io`、`gcr` | `gcr.io` |
-| `k8s.gcr.io`、`k8s-gcr` | `k8s.gcr.io` |
-| `registry.k8s.io`、`k8s` | `registry.k8s.io` |
-| `quay.io`、`quay` | `quay.io` |
-| `mcr.microsoft.com`、`mcr` | `mcr.microsoft.com` |
-| `nvcr.io`、`nvcr` | `nvcr.io` |
-| `docker.elastic.co`、`elastic` | `docker.elastic.co` |
-| `dhi.io`、`dhi` | `dhi.io` |
-| `docker.cloudsmith.io`、`cloudsmith` | `docker.cloudsmith.io` |
+| registry | 泛域名模式 | 路径模式 |
+| --- | --- | --- |
+| `docker.io` | `docker.example.com` | `mirror.example.com/docker.io/` |
+| `ghcr.io` | `ghcr.example.com` | `mirror.example.com/ghcr.io/` |
+| `gcr.io` | `gcr.example.com` | `mirror.example.com/gcr.io/` |
+| `k8s.gcr.io` | `k8s-gcr.example.com` | `mirror.example.com/k8s.gcr.io/` |
+| `registry.k8s.io` | `k8s.example.com` | `mirror.example.com/registry.k8s.io/` |
+| `quay.io` | `quay.example.com` | `mirror.example.com/quay.io/` |
+| `mcr.microsoft.com` | `mcr.example.com` | `mirror.example.com/mcr.microsoft.com/` |
+| `nvcr.io` | `nvcr.example.com` | `mirror.example.com/nvcr.io/` |
+| `docker.elastic.co` | `elastic.example.com` | `mirror.example.com/docker.elastic.co/` |
+| `dhi.io` | `dhi.example.com` | `mirror.example.com/dhi.io/` |
+| `docker.cloudsmith.io` | `cloudsmith.example.com` | `mirror.example.com/docker.cloudsmith.io/` |
 
-path 模式只接受上表中的已知 registry 完整域名前缀，不能写 `ghcr`、`mcr` 这类 host 别名；未知的带点前缀返回 403，避免变成任意 host 的开放代理。
-host 模式未知首段默认 Docker Hub。
+`example.com` 是泛域名根，`mirror.example.com` 是 Worker 当前域名；部署时替换成实际域名。
+path 模式只接受完整的 registry 域名前缀，不能写 `ghcr`、`mcr` 这类 host 别名；未知的带点前缀返回 403。
+`proxyMode=host` 时路径前缀返回 400，host 模式未知首段默认 Docker Hub。
 
 ### 环境变量
 
 | 变量 | 说明 |
 | --- | --- |
-| `whitelist` | 允许的仓库列表，逗号或空白分隔；为空表示不限制 |
-| `strictDomain` | `true` 时，未知 host 只允许 ping、token、根路径和带已知 registry 前缀的 path 模式请求 |
-| `defaultIndex` | 浏览器访问根路径时反代的上游地址，例如 `https://hub.docker.com` |
+| `whitelist` | 允许的仓库列表，逗号或空白分隔；非通配项按前缀匹配；为空表示不限制 |
+| `proxyMode` | `host` 泛域名模式，`path` 路径模式；默认 `path` |
+| `indexText` | 根路径返回的自定义纯文本；未设置或空字符串时返回内置说明页；`defaultIndex` 优先 |
+| `helpIndexPath` | 额外帮助页路径，例如 `/help`；未设置或空字符串不启用；始终返回内置说明页，绕过 `indexText`、`defaultIndex` |
+| `strictDomain` | `true` 时，未知 host 的无前缀仓库请求被拒绝；path 模式的已知 registry 前缀仍可用 |
+| `defaultIndex` | 根路径反代的上游地址，例如 `https://hub.docker.com` |
 | `debug` | `true` 时错误响应携带上游错误信息 |
 
 ### 白名单
@@ -94,18 +108,18 @@ host 模式未知首段默认 Docker Hub。
 匹配的是 repository，Docker Hub 官方镜像已补全为 `library/`：
 
 ```text
-library/                 官方镜像
-mzzsfy/                  mzzsfy 下所有仓库
-mzzsfy/tts               精确匹配该仓库
+library                  官方镜像及 library 下所有仓库
+library/                 同上
+mzzsfy                   mzzsfy 下所有仓库
+mzzsfy/tts               mzzsfy/tts 及同前缀仓库
 docker.io/library/*      Docker Hub 官方镜像，仅一层
 ghcr.io/owner/**         GHCR owner 下任意层级
 ```
 
 规则：
 
-- 无通配符且不以 `/` 结尾：精确匹配，不会把 `abc/bcd` 匹配到 `abc/bcdx`。
+- 无通配符：按前缀匹配，`library` 会放行 `library/nginx`，`mzzsfy/tts` 也会放行 `mzzsfy/ttsx`。
 - 单独的 `*` 或 `**` 匹配全部仓库。
-- 以 `/` 结尾：前缀匹配。
 - `/*`：只匹配一层；`/**`：匹配任意层。
 - 首段是已知 registry 时，按 `<registry>/<repository>` 完整名匹配；否则只匹配 repository，对所有 registry 生效。
 - 要限定某个 registry，写完整前缀，例如 `ghcr.io/owner/**`。
@@ -116,8 +130,13 @@ ghcr.io/owner/**         GHCR owner 下任意层级
 
 ### 行为说明
 
+- 根路径优先反代 `defaultIndex`；否则 `indexText` 非空时返回该纯文本；再否则浏览器返回当前
+  `proxyMode` 对应的说明页，非浏览器客户端返回 `ok`。
+- 设置 `helpIndexPath=/help` 后，`/help` 始终返回当前 `proxyMode` 的内置说明页，绕过 `indexText`
+  和 `defaultIndex`；根路径的 `indexText`、`defaultIndex` 遮蔽逻辑不变。
 - 所有 `/v2/<repo>/...` 请求统一解析 repository，manifests、blobs、blob 上传、tags/list、referrers 都会做
   Docker Hub 短名补全和白名单检查。
+- `proxyMode=host` 只按 host 首段路由；`proxyMode=path` 忽略 host，只按路径前缀路由。
 - 上游 401 的 `Www-Authenticate` realm 会被编码为 Worker 的 token 路径；支持 quay 的 `/v2/auth`、
   elastic 的外部认证域等非标准路径。token 请求中的 scope 会剥离 path 模式前缀并按目标 registry
   发现认证端点。
