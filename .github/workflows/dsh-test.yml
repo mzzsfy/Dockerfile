@@ -41,20 +41,18 @@ jobs:
         include:
           # amd64 跑完整验收，含真实工具链下载与断网复用
           - platform: linux/amd64
+            runner: ubuntu-latest
             tag: dsh-test-amd64
             scope: full
-          # arm64 经 qemu 执行，跳过下载量大的工具链段，覆盖 apt 包装、源快照、钩子与进程管理
-          - platform: linux/arm64/v8
+          # arm64 在原生 runner 执行，跳过下载量大的工具链段，覆盖 apt 包装、源快照、钩子与进程管理
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
             tag: dsh-test-arm64
             scope: lite
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Check Out
         uses: actions/checkout@v7
-
-      - name: Set up QEMU
-        if: matrix.platform != 'linux/amd64'
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
